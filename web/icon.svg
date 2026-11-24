@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#070a10"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#22c55e"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <rect x="28" y="28" width="456" height="456" rx="88" fill="none" stroke="#1e293b" stroke-width="6"/>
+  <!-- Shaded Long Forecast / Breakout Zone -->
+  <rect x="240" y="116" width="164" height="106" rx="12" fill="#22c55e" fill-opacity="0.18" stroke="#22c55e" stroke-opacity="0.55" stroke-width="4"/>
+  <rect x="240" y="222" width="164" height="102" rx="12" fill="#f87171" fill-opacity="0.16" stroke="#f87171" stroke-opacity="0.55" stroke-width="4"/>
+  <!-- Donchian Channel Lines -->
+  <line x1="96" y1="222" x2="416" y2="222" stroke="url(#accent)" stroke-width="10" stroke-linecap="round"/>
+  <line x1="96" y1="362" x2="416" y2="362" stroke="#334155" stroke-width="8" stroke-linecap="round"/>
+  <!-- Candle 1: Red inside channel -->
+  <line x1="154" y1="242" x2="154" y2="352" stroke="#f87171" stroke-width="12" stroke-linecap="round"/>
+  <rect x="132" y="266" width="44" height="62" rx="8" fill="#f87171"/>
+  <!-- Candle 2: Consolidation -->
+  <line x1="222" y1="234" x2="222" y2="334" stroke="#94a3b8" stroke-width="12" stroke-linecap="round"/>
+  <rect x="200" y="254" width="44" height="52" rx="8" fill="#cbd5e1"/>
+  <!-- Candle 3: Bullish Breakout -->
+  <line x1="298" y1="138" x2="298" y2="274" stroke="#22c55e" stroke-width="14" stroke-linecap="round"/>
+  <rect x="274" y="160" width="48" height="86" rx="9" fill="#22c55e"/>
+  <!-- Candle 4: Continuation -->
+  <line x1="370" y1="108" x2="370" y2="210" stroke="#38bdf8" stroke-width="14" stroke-linecap="round"/>
+  <rect x="346" y="128" width="48" height="60" rx="9" fill="#38bdf8"/>
+</svg>

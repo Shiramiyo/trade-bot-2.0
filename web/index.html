@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0f17">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="TradeTerm">
+  <title>TradeTerminal — NQ &amp; XAUUSD 1H Donchian</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/vendor/lightweight-charts.js"></script>
+  <script defer src="/tv_chart.js"></script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <main id="auth-view" class="auth-shell" hidden>
+    <section class="auth-card" aria-labelledby="auth-heading">
+      <div class="brand-row">
+        <span class="brand-dot" aria-hidden="true"></span>
+        <span class="brand-tag">READ-ONLY MT5 TERMINAL</span>
+      </div>
+      <h1 id="auth-heading">Unlock Trading Terminal</h1>
+      <p class="auth-subtitle">Enter the terminal passcode shown in your PowerShell window to view live Demo/Live MT5 performance, trade history, and radar.</p>
+      <form id="login-form" action="/api/login" method="POST" novalidate>
+        <div class="field">
+          <label for="passcode-input">Passcode <span aria-hidden="true">*</span></label>
+          <div class="password-row">
+            <input
+              id="passcode-input"
+              name="passcode"
+              type="password"
+              autocomplete="current-password"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+              enterkeyhint="done"
+              minlength="4"
+              required
+              aria-describedby="passcode-help login-error"
+            >
+            <button
+              id="toggle-passcode"
+              type="button"
+              class="btn-secondary icon-toggle"
+              aria-pressed="false"
+              aria-label="Show passcode"
+            >Show</button>
+          </div>
+          <span id="passcode-help" class="field-hint">Read-only access only; cannot place or close trades.</span>
+        </div>
+        <p id="login-error" class="form-error" role="status" aria-live="polite" hidden></p>
+        <button id="login-submit" type="submit" class="btn-primary">Open Terminal</button>
+      </form>
+    </section>
+  </main>
+
+  <div id="app-view" class="app-shell" hidden>
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand-title-row">
+          <span id="mt5-status-dot" class="status-dot offline" aria-hidden="true"></span>
+          <h1 class="app-title">TradeTerminal</h1>
+          <span id="acct-mode-badge" class="pill neutral">DEMO</span>
+          <span id="bot-alive-badge" class="pill neutral">CHECKING BOT...</span>
+        </div>
+        <div class="meta-line" id="clock-line">
+          <span id="acct-meta">MT5 —</span>
+          <span aria-hidden="true">·</span>
+          <span id="ny-clock">NY —</span>
+          <span aria-hidden="true">·</span>
+          <span id="window-badge">Window —</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div class="segmented" role="group" aria-label="Account history scope">
+          <button type="button" id="scope-all-btn" class="seg-btn" aria-pressed="true">Full Account</button>
+          <button type="button" id="scope-bot-btn" class="seg-btn" aria-pressed="false">Bot Only</button>
+        </div>
+        <button type="button" id="install-app-btn" class="btn-secondary" hidden>Install App</button>
+        <button type="button" id="devices-btn" class="btn-secondary">App / Phone</button>
+        <button type="button" id="refresh-btn" class="btn-secondary">Refresh <span id="countdown-label" class="muted"></span></button>
+        <button type="button" id="logout-btn" class="btn-secondary">Lock</button>
+      </div>
+    </header>
+
+    <div id="alert-banner" class="alert-banner" role="status" aria-live="polite" hidden></div>
+
+    <nav class="tabs-bar" aria-label="Terminal sections">
+      <div class="tablist" role="tablist" aria-label="Terminal views">
+        <button type="button" role="tab" id="tab-overview" aria-selected="true" tabindex="0">Overview</button>
+        <button type="button" role="tab" id="tab-chart" aria-selected="false" tabindex="-1">Chart</button>
+        <button type="button" role="tab" id="tab-trades" aria-selected="false" tabindex="-1">Trades</button>
+        <button type="button" role="tab" id="tab-radar" aria-selected="false" tabindex="-1">1H Radar</button>
+        <button type="button" role="tab" id="tab-reports" aria-selected="false" tabindex="-1">Reports</button>
+        <button type="button" role="tab" id="tab-logs" aria-selected="false" tabindex="-1">Bot Logs</button>
+      </div>
+    </nav>
+
+    <main class="main-content">
+      <section role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">
+        <div class="panel-body">
+          <div class="kpi-grid" id="overview-kpis">
+            <article class="kpi-card">
+              <span class="kpi-label">Balance</span>
+              <strong class="kpi-value" id="kpi-balance">—</strong>
+              <span class="kpi-sub" id="kpi-acct-login">Account —</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-label">Equity</span>
+              <strong class="kpi-value" id="kpi-equity">—</strong>
+              <span class="kpi-sub" id="kpi-floating">Floating —</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-label">Net Closed P&amp;L</span>
+              <strong class="kpi-value" id="kpi-net-pnl">—</strong>
+              <span class="kpi-sub" id="kpi-return-pct">Return —</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-label">Win Rate / PF</span>
+              <strong class="kpi-value" id="kpi-win-pf">—</strong>
+              <span class="kpi-sub" id="kpi-wl-count">0 trades</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-label">Realized Max DD</span>
+              <strong class="kpi-value" id="kpi-max-dd">—</strong>
+              <span class="kpi-sub" id="kpi-expectancy">Expectancy —</span>
+            </article>
+            <article class="kpi-card">
+              <span class="kpi-label">Daily DD Guard</span>
+              <strong class="kpi-value" id="kpi-daily-dd">—</strong>
+              <span class="kpi-sub" id="kpi-strategy">DONCHIAN_1H</span>
+            </article>
+          </div>
+
+          <div class="two-col">
+            <article class="card chart-card">
+              <header class="card-header">
+                <div>
+                  <h2>Account Equity Curve</h2>
+                  <p class="card-sub" id="equity-sub">Closed-trade balance progression + floating equity</p>
+                </div>
+                <span class="pill neutral" id="equity-range-pill">—</span>
+              </header>
+              <div class="canvas-wrap">
+                <canvas id="equity-canvas" aria-label="Account equity curve chart"></canvas>
+              </div>
+              <p class="chart-tooltip" id="equity-tooltip">Tap or hover chart points to inspect trade equity.</p>
+            </article>
+
+            <article class="card">
+              <header class="card-header">
+                <div>
+                  <h2>Symbol Breakdown</h2>
+                  <p class="card-sub">Closed performance by instrument</p>
+                </div>
+              </header>
+              <div id="symbol-breakdown-list" class="symbol-stats-list"></div>
+            </article>
+          </div>
+
+          <article class="card">
+            <header class="card-header">
+              <div>
+                <h2>Open MT5 Positions</h2>
+                <p class="card-sub" id="open-pos-sub">Active trades and 2.5×ATR trailing stops</p>
+              </div>
+              <span class="pill neutral" id="open-pos-count">0 open</span>
+            </header>
+            <div id="open-positions-container" class="positions-grid"></div>
+          </article>
+        </div>
+      </section>
+
+      <section role="tabpanel" id="panel-chart" aria-labelledby="tab-chart" hidden>
+        <div class="panel-body tv-panel-body">
+          <div id="tv-studio" class="tv-studio" data-layout="1">
+            <!-- Top TradingView Toolbar -->
+            <div class="tv-topbar" role="toolbar" focusgroup="toolbar wrap" aria-label="Chart controls" aria-controls="tv-stage">
+              <div class="tv-tb-group" role="group" aria-label="Symbol search">
+                <button type="button" id="tv-sym-trigger" class="tv-tb-btn tv-sym-btn" popovertarget="tv-symbol-popover" title="Search or switch symbol (/)">
+                  <span id="tv-active-badge" class="tv-badge">100</span>
+                  <span id="tv-active-symbol" class="tv-sym-code">NAS100</span>
+                  <span class="tv-caret" aria-hidden="true">&#9662;</span>
+                </button>
+              </div>
+
+              <span role="separator" aria-orientation="vertical" class="tv-sep"></span>
+
+              <div class="tv-tb-group" role="group" aria-label="Timeframe">
+                <button type="button" class="tv-tb-btn tv-tf-btn" data-tf="1m" aria-pressed="false">1m</button>
+                <button type="button" class="tv-tb-btn tv-tf-btn" data-tf="5m" aria-pressed="false">5m</button>
+                <button type="button" class="tv-tb-btn tv-tf-btn" data-tf="15m" aria-pressed="false">15m</button>
+                <button type="button" class="tv-tb-btn tv-tf-btn" data-tf="30m" aria-pressed="false">30m</button>
+                <button type="button" class="tv-tb-btn tv-tf-btn" data-tf="1h" aria-pressed="true">1H</button>
+                <button type="button" class="tv-tb-btn tv-tf-btn" data-tf="4h" aria-pressed="false">4H</button>
+                <button type="button" class="tv-tb-btn tv-tf-btn" data-tf="1d" aria-pressed="false">1D</button>
+                <button type="button" class="tv-tb-btn tv-tf-btn" data-tf="1w" aria-pressed="false">1W</button>
+              </div>
+
+              <span role="separator" aria-orientation="vertical" class="tv-sep"></span>
+
+              <div class="tv-tb-group" role="group" aria-label="Chart style and indicators">
+                <button type="button" id="tv-style-trigger" class="tv-tb-btn" popovertarget="tv-style-popover" title="Chart style">
+                  <span id="tv-style-label">Candles</span>
+                  <span class="tv-caret" aria-hidden="true">&#9662;</span>
+                </button>
+                <button type="button" id="tv-indicators-trigger" class="tv-tb-btn" popovertarget="tv-indicators-popover" title="Indicators &amp; Overlays">
+                  <span>Indicators</span>
+                  <span id="tv-ind-count" class="tv-count-pill">3</span>
+                </button>
+                <button type="button" id="tv-alerts-trigger" class="tv-tb-btn" popovertarget="tv-alerts-popover" title="Price Alerts">
+                  <span>Alert</span>
+                  <span id="tv-alert-count" class="tv-count-pill" hidden>0</span>
+                </button>
+              </div>
+
+              <span role="separator" aria-orientation="vertical" class="tv-sep"></span>
+
+              <div class="tv-tb-group" role="group" aria-label="Replay, layout, and bot overlays">
+                <button type="button" id="tv-replay-btn" class="tv-tb-btn" aria-pressed="false" title="Bar Replay mode">Replay</button>
+                <button type="button" id="tv-layout-trigger" class="tv-tb-btn" popovertarget="tv-layout-popover" title="Multi-chart layout">
+                  <span id="tv-layout-label">1 Pane</span>
+                  <span class="tv-caret" aria-hidden="true">&#9662;</span>
+                </button>
+                <button type="button" id="tv-bot-boxes-btn" class="tv-tb-btn" aria-pressed="true" title="Toggle Bot Trade &amp; Forecast Boxes">Bot Boxes</button>
+              </div>
+
+              <div class="tv-tb-group tv-tb-right" role="group" aria-label="View tools">
+                <button type="button" id="tv-fit-btn" class="tv-tb-btn" title="Fit visible candles">Fit</button>
+                <button type="button" id="tv-shot-btn" class="tv-tb-btn" title="Download PNG snapshot">Snapshot</button>
+                <button type="button" id="tv-fullscreen-btn" class="tv-tb-btn" aria-pressed="false" title="Toggle fullscreen">Full</button>
+                <button type="button" id="tv-watchlist-toggle-btn" class="tv-tb-btn" aria-pressed="true" title="Toggle watchlist panel">Watchlist</button>
+              </div>
+            </div>
+
+            <!-- Main 3-Column TradingView Workspace -->
+            <div class="tv-workspace">
+              <!-- Left Drawing Tools Toolbar -->
+              <div id="tv-drawbar" class="tv-drawbar" role="toolbar" aria-orientation="vertical" focusgroup="toolbar wrap block" aria-label="Drawing tools" aria-controls="tv-stage">
+                <div class="tv-draw-group" role="group" aria-label="Pointer tools">
+                  <button type="button" class="tv-tool-btn" data-tool="cursor" aria-pressed="true" aria-label="Crosshair Cursor (Esc)" title="Crosshair (Esc)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                  </button>
+                </div>
+                <span role="separator" aria-orientation="horizontal" class="tv-hsep"></span>
+                <div class="tv-draw-group" role="group" aria-label="Line and level tools">
+                  <button type="button" class="tv-tool-btn" data-tool="trendline" aria-pressed="false" aria-label="Trend Line (Alt+T)" title="Trend Line (Alt+T)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18L20 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="5" cy="17" r="2" fill="currentColor"/><circle cx="19" cy="7" r="2" fill="currentColor"/></svg>
+                  </button>
+                  <button type="button" class="tv-tool-btn" data-tool="ray" aria-pressed="false" aria-label="Horizontal Ray" title="Horizontal Ray">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="6" cy="12" r="2.2" fill="currentColor"/></svg>
+                  </button>
+                  <button type="button" class="tv-tool-btn" data-tool="hline" aria-pressed="false" aria-label="Horizontal Line (Alt+H)" title="Horizontal Line (Alt+H)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg>
+                  </button>
+                  <button type="button" class="tv-tool-btn" data-tool="vline" aria-pressed="false" aria-label="Vertical Line" title="Vertical Line">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg>
+                  </button>
+                </div>
+                <span role="separator" aria-orientation="horizontal" class="tv-hsep"></span>
+                <div class="tv-draw-group" role="group" aria-label="Shapes and Fibonacci">
+                  <button type="button" class="tv-tool-btn" data-tool="rect" aria-pressed="false" aria-label="Rectangle Zone (Alt+R)" title="Rectangle / Zone (Alt+R)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+                  </button>
+                  <button type="button" class="tv-tool-btn" data-tool="fib" aria-pressed="false" aria-label="Fib Retracement (Alt+F)" title="Fib Retracement (Alt+F)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 10h16M4 14h16M4 18h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M5 18L19 6" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2 2"/></svg>
+                  </button>
+                </div>
+                <span role="separator" aria-orientation="horizontal" class="tv-hsep"></span>
+                <div class="tv-draw-group" role="group" aria-label="Position and measure tools">
+                  <button type="button" class="tv-tool-btn" data-tool="long" aria-pressed="false" aria-label="Long Position Risk Reward" title="Long Position (R:R)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="8" fill="rgba(34,197,94,0.35)" stroke="#22c55e" stroke-width="1.4"/><rect x="4" y="12" width="16" height="8" fill="rgba(248,113,113,0.35)" stroke="#f87171" stroke-width="1.4"/></svg>
+                  </button>
+                  <button type="button" class="tv-tool-btn" data-tool="short" aria-pressed="false" aria-label="Short Position Risk Reward" title="Short Position (R:R)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="8" fill="rgba(248,113,113,0.35)" stroke="#f87171" stroke-width="1.4"/><rect x="4" y="12" width="16" height="8" fill="rgba(34,197,94,0.35)" stroke="#22c55e" stroke-width="1.4"/></svg>
+                  </button>
+                  <button type="button" class="tv-tool-btn" data-tool="measure" aria-pressed="false" aria-label="Price Range Ruler (Alt+M)" title="Measure / Ruler (Alt+M)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19L19 5M14 5h5v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button type="button" class="tv-tool-btn" data-tool="text" aria-pressed="false" aria-label="Text Annotation" title="Text Note">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M12 6v13M9 19h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                  </button>
+                </div>
+                <span role="separator" aria-orientation="horizontal" class="tv-hsep"></span>
+                <div class="tv-draw-group" role="group" aria-label="Drawing modifiers">
+                  <button type="button" id="tv-magnet-btn" class="tv-tool-btn" aria-pressed="false" aria-label="Magnet Snap to OHLC (M)" title="Magnet OHLC Snap (M)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v7a6 6 0 0012 0V5M6 8h3M15 8h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                  </button>
+                  <button type="button" id="tv-lock-btn" class="tv-tool-btn" aria-pressed="false" aria-label="Lock Drawings" title="Lock Drawings">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="10" width="12" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 10V7a4 4 0 018 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+                  </button>
+                  <button type="button" id="tv-undo-btn" class="tv-tool-btn" aria-label="Undo Drawing (Ctrl+Z)" title="Undo (Ctrl+Z)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 010 12h-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button type="button" id="tv-delete-btn" class="tv-tool-btn" aria-label="Delete Selected Drawing (Del)" title="Delete Selected (Del)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button type="button" id="tv-clear-draw-btn" class="tv-tool-btn danger" aria-label="Clear All Drawings" title="Clear All Drawings on Symbol">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Center Chart Stage -->
+              <div class="tv-center">
+                <div id="tv-replay-bar" class="tv-replay-bar" hidden>
+                  <span class="pill amber">REPLAY MODE</span>
+                  <span id="tv-replay-status" class="muted">Click any candle to set replay cut-off bar.</span>
+                  <div class="tv-replay-actions">
+                    <button type="button" id="tv-replay-pick" class="btn-mini">Jump to Bar</button>
+                    <button type="button" id="tv-replay-step" class="btn-mini">Step +1</button>
+                    <button type="button" id="tv-replay-play" class="btn-mini">Play</button>
+                    <select id="tv-replay-speed" class="tv-mini-select" aria-label="Replay speed">
+                      <option value="800">1x</option>
+                      <option value="400">2x</option>
+                      <option value="160">5x</option>
+                    </select>
+                    <button type="button" id="tv-replay-exit" class="btn-mini">Exit</button>
+                  </div>
+                </div>
+
+                <div id="tv-stage" class="tv-stage" data-panes="1">
+                  <!-- Pane slots populated/managed dynamically for 1, 2, or 4 charts -->
+                </div>
+
+                <div class="tv-bottombar">
+                  <div class="tv-range-group" role="group" aria-label="Quick date range">
+                    <button type="button" class="tv-mini-btn tv-range-btn" data-range="30">30B</button>
+                    <button type="button" class="tv-mini-btn tv-range-btn" data-range="100">100B</button>
+                    <button type="button" class="tv-mini-btn tv-range-btn" data-range="240">240B</button>
+                    <button type="button" class="tv-mini-btn tv-range-btn" data-range="all">All</button>
+                  </div>
+                  <div id="tv-draw-hint" class="tv-draw-hint">Scroll to zoom · Drag to pan · Right-click or Del to remove drawing</div>
+                  <div class="tv-scale-group">
+                    <select id="tv-tz-select" class="tv-mini-select" aria-label="Chart timezone">
+                      <option value="Asia/Phnom_Penh">UTC+7 (KH)</option>
+                      <option value="America/New_York">New York (NY)</option>
+                      <option value="UTC">UTC</option>
+                    </select>
+                    <button type="button" id="tv-scale-pct" class="tv-mini-btn" aria-pressed="false" title="Percentage scale">%</button>
+                    <button type="button" id="tv-scale-log" class="tv-mini-btn" aria-pressed="false" title="Logarithmic scale">log</button>
+                    <button type="button" id="tv-scale-inv" class="tv-mini-btn" aria-pressed="false" title="Invert price scale">inv</button>
+                    <button type="button" id="tv-scale-auto" class="tv-mini-btn" aria-pressed="true" title="Auto scale">auto</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Right Watchlist Sidebar -->
+              <aside id="tv-watchlist" class="tv-watchlist" aria-label="Market Watchlist">
+                <div class="tv-wl-header">
+                  <strong>Watchlist</strong>
+                  <span id="tv-wl-updated" class="muted">Live</span>
+                </div>
+                <form id="tv-wl-add-form" class="tv-wl-search" autocomplete="off">
+                  <input id="tv-wl-search-input" type="search" placeholder="Filter or add (AAPL, DOGEUSDT.P)..." aria-label="Filter or add symbol">
+                  <button type="submit" class="tv-mini-btn" title="Open or add symbol">+</button>
+                </form>
+                <div class="tv-wl-filters" role="group" aria-label="Watchlist category filters">
+                  <button type="button" class="tv-chip-btn" data-wl-filter="ALL" aria-pressed="true">All</button>
+                  <button type="button" class="tv-chip-btn" data-wl-filter="FLAGGED" aria-pressed="false">Flagged</button>
+                  <button type="button" class="tv-chip-btn" data-wl-filter="CRYPTO" aria-pressed="false">Crypto</button>
+                  <button type="button" class="tv-chip-btn" data-wl-filter="FOREX" aria-pressed="false">FX</button>
+                  <button type="button" class="tv-chip-btn" data-wl-filter="INDEX_COMM" aria-pressed="false">Idx/Cmd</button>
+                </div>
+                <div class="tv-wl-cols" aria-hidden="true">
+                  <span>Symbol</span>
+                  <span>Last</span>
+                  <span>Chg</span>
+                  <span>Chg%</span>
+                </div>
+                <div id="tv-wl-list" class="tv-wl-list" role="listbox" aria-label="Watchlist symbols"></div>
+              </aside>
+            </div>
+          </div>
+
+          <p id="tv-action-status" class="sr-only" role="status" aria-live="polite"></p>
+
+          <!-- Native Anchored Popovers -->
+          <div id="tv-symbol-popover" popover="auto" class="tv-popover tv-sym-popover">
+            <div class="tv-pop-head">
+              <strong>Jump to Symbol</strong>
+              <span class="muted">Press / anywhere</span>
+            </div>
+            <form id="tv-quick-sym-form" class="tv-wl-search" autocomplete="off">
+              <input id="tv-quick-sym-input" type="search" placeholder="e.g. BTCUSDT.P, GOLD, NAS100, AAPL..." aria-label="Symbol ticker">
+              <button type="submit" class="btn-mini">Open</button>
+            </form>
+            <div id="tv-quick-sym-list" class="tv-quick-sym-list"></div>
+          </div>
+
+          <div id="tv-style-popover" popover="auto" class="tv-popover">
+            <div class="tv-pop-head"><strong>Chart Style</strong></div>
+            <div class="tv-pop-list">
+              <button type="button" class="tv-pop-opt" data-chart-style="candles" aria-pressed="true">Candlesticks</button>
+              <button type="button" class="tv-pop-opt" data-chart-style="hollow" aria-pressed="false">Hollow Candles</button>
+              <button type="button" class="tv-pop-opt" data-chart-style="heikin" aria-pressed="false">Heikin-Ashi</button>
+              <button type="button" class="tv-pop-opt" data-chart-style="bars" aria-pressed="false">OHLC Bars</button>
+              <button type="button" class="tv-pop-opt" data-chart-style="line" aria-pressed="false">Line</button>
+              <button type="button" class="tv-pop-opt" data-chart-style="area" aria-pressed="false">Area</button>
+            </div>
+          </div>
+
+          <div id="tv-indicators-popover" popover="auto" class="tv-popover tv-ind-popover">
+            <div class="tv-pop-head">
+              <strong>Indicators &amp; ICT Overlays</strong>
+              <span class="muted">Unlimited</span>
+            </div>
+            <div class="tv-ind-section">
+              <div class="tv-ind-title">Price Overlays</div>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="ema20"> EMA 20</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="ema50" checked> EMA 50</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="ema200" checked> EMA 200</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="sma20"> SMA 20</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="donchian" checked> Donchian Channel (20)</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="bb"> Bollinger Bands (20, 2)</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="vwap"> Rolling VWAP (24)</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="pdhl"> Prev Day High / Low (PDH/PDL)</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="fvg"> Fair Value Gaps (FVG)</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="sessions"> Killzone Sessions (Asia / LDN / NY)</label>
+            </div>
+            <div class="tv-ind-section">
+              <div class="tv-ind-title">Sub-Pane Oscillators</div>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="volume" checked> Volume</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="rsi"> RSI (14)</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="macd"> MACD (12, 26, 9)</label>
+              <label class="tv-ind-item"><input type="checkbox" data-ind="atr"> ATR (14)</label>
+            </div>
+          </div>
+
+          <div id="tv-layout-popover" popover="auto" class="tv-popover">
+            <div class="tv-pop-head"><strong>Multi-Chart Layout</strong></div>
+            <div class="tv-pop-list">
+              <button type="button" class="tv-pop-opt" data-layout-opt="1" aria-pressed="true">1 Chart (Single)</button>
+              <button type="button" class="tv-pop-opt" data-layout-opt="2" aria-pressed="false">2 Charts (Split)</button>
+              <button type="button" class="tv-pop-opt" data-layout-opt="4" aria-pressed="false">4 Charts (2×2 Grid)</button>
+            </div>
+            <div class="tv-ind-section">
+              <label class="tv-ind-item"><input type="checkbox" id="tv-sync-crosshair" checked> Sync Crosshair</label>
+              <label class="tv-ind-item"><input type="checkbox" id="tv-sync-symbol"> Sync Symbol</label>
+            </div>
+          </div>
+
+          <div id="tv-alerts-popover" popover="auto" class="tv-popover tv-alert-popover">
+            <div class="tv-pop-head"><strong>Price Alerts</strong></div>
+            <form id="tv-alert-form" class="tv-alert-form">
+              <label class="inline-label" for="tv-alert-price">Price target for <span id="tv-alert-sym">NAS100</span></label>
+              <div class="tv-alert-inputs">
+                <select id="tv-alert-cond" class="tv-mini-select" aria-label="Alert condition">
+                  <option value="above">Crosses Above</option>
+                  <option value="below">Crosses Below</option>
+                </select>
+                <input id="tv-alert-price" type="number" step="any" placeholder="Price..." required>
+                <button type="submit" class="btn-mini">Add</button>
+              </div>
+            </form>
+            <div id="tv-alert-list" class="tv-alert-list"></div>
+          </div>
+
+          <!-- Bot Position & Forecast Cards (linked with active symbol / Trades table) -->
+          <article class="card tv-bot-cards-wrap">
+            <header class="card-header wrap-header">
+              <div>
+                <h2 id="chart-boxes-heading">Active Bot Positions &amp; Strategy Boxes</h2>
+                <p class="card-sub">Live MT5 positions, 1H Donchian forecast levels, or inspected closed trades</p>
+              </div>
+              <div class="toolbar-group toolbar-toggles">
+                <div class="segmented" role="group" aria-label="Forecast target multiple">
+                  <button type="button" class="seg-btn chart-rr-btn" data-rr="1" aria-pressed="false">1R</button>
+                  <button type="button" class="seg-btn chart-rr-btn" data-rr="2" aria-pressed="false">2R</button>
+                  <button type="button" class="seg-btn chart-rr-btn" data-rr="3" aria-pressed="true">3R</button>
+                </div>
+                <button type="button" id="clear-inspected-trade-btn" class="btn-secondary" hidden>Clear Selected Trade</button>
+              </div>
+            </header>
+            <div id="chart-position-cards" class="positions-grid"></div>
+          </article>
+        </div>
+      </section>
+
+      <section role="tabpanel" id="panel-trades" aria-labelledby="tab-trades" hidden>
+        <div class="panel-body">
+          <div class="card">
+            <header class="card-header wrap-header">
+              <div>
+                <h2 id="trades-heading">Closed Trade History</h2>
+                <p class="card-sub" id="trades-sub">Reconstructed directly from MT5 history deals</p>
+              </div>
+              <search class="filter-bar">
+                <label class="inline-label" for="trade-symbol-filter">Symbol</label>
+                <select id="trade-symbol-filter" class="select-control">
+                  <option value="ALL">All Symbols</option>
+                </select>
+              </search>
+            </header>
+
+            <div id="trades-sort-status" class="sr-only" role="status" aria-live="polite"></div>
+
+            <div tabindex="0" role="region" aria-labelledby="trades-caption" class="table-wrapper">
+              <table id="trades-table" class="data-table trades-table">
+                <caption id="trades-caption" class="sr-only">Closed MT5 Trade History</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Exit Time <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="text"><button type="button" class="sort-btn">Symbol <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="text"><button type="button" class="sort-btn">Side <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Lots <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Entry <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Exit <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Duration <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Net P&amp;L <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col">Source</th>
+                    <th scope="col">Chart</th>
+                  </tr>
+                </thead>
+                <tbody id="trades-tbody"></tbody>
+              </table>
+            </div>
+            <p id="trades-empty" class="empty-note" hidden>No closed trades recorded in MT5 history yet. Trades appear here once positions close during the week.</p>
+          </div>
+        </div>
+      </section>
+
+      <section role="tabpanel" id="panel-radar" aria-labelledby="tab-radar" hidden>
+        <div class="panel-body">
+          <div id="radar-grid" class="radar-grid"></div>
+        </div>
+      </section>
+
+      <section role="tabpanel" id="panel-reports" aria-labelledby="tab-reports" hidden>
+        <div class="panel-body">
+          <article class="card">
+            <header class="card-header">
+              <div>
+                <h2>Live Demo vs. 4-Year Backtest Expectancy</h2>
+                <p class="card-sub">Benchmark from calibrated MetaQuotes-Demo M15 data (2023–2026)</p>
+              </div>
+              <span class="pill accent">DONCHIAN_1H_TREND</span>
+            </header>
+            <div class="kpi-grid" id="benchmark-compare-grid"></div>
+          </article>
+
+          <article class="card">
+            <header class="card-header">
+              <div>
+                <h2 id="reports-heading">4-Year Strategy Arena Leaderboard</h2>
+                <p class="card-sub">Full 16-strategy historical test from arena_4y_results.csv</p>
+              </div>
+            </header>
+            <div id="reports-sort-status" class="sr-only" role="status" aria-live="polite"></div>
+            <div tabindex="0" role="region" aria-labelledby="reports-caption" class="table-wrapper">
+              <table id="reports-table" class="data-table reports-table">
+                <caption id="reports-caption" class="sr-only">4-Year Strategy Arena Results</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-type="text"><button type="button" class="sort-btn">Strategy <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Trades <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Win % <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">PF <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Net P&amp;L <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Max DD % <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="number"><button type="button" class="sort-btn">Ret / DD <span class="sort-icon" aria-hidden="true"></span></button></th>
+                    <th scope="col" data-type="text"><button type="button" class="sort-btn">+Yrs <span class="sort-icon" aria-hidden="true"></span></button></th>
+                  </tr>
+                </thead>
+                <tbody id="reports-tbody"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section role="tabpanel" id="panel-logs" aria-labelledby="tab-logs" hidden>
+        <div class="panel-body">
+          <article class="card">
+            <header class="card-header wrap-header">
+              <div>
+                <h2>Bot Execution Log (live_bot.log)</h2>
+                <p class="card-sub" id="log-heartbeat-sub">Waiting for heartbeat status...</p>
+              </div>
+              <search class="filter-bar">
+                <label class="inline-label" for="log-filter">Filter</label>
+                <select id="log-filter" class="select-control">
+                  <option value="ALL">All Entries</option>
+                  <option value="SIGNALS">Signals, Orders &amp; Trails</option>
+                  <option value="WARN">Warnings &amp; Errors</option>
+                </select>
+                <button type="button" id="reload-logs-btn" class="btn-secondary">Reload Logs</button>
+              </search>
+            </header>
+            <div id="log-feed" class="log-feed" aria-live="off"></div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="phone-connect-dialog" class="app-dialog" closedby="any" aria-labelledby="phone-dialog-title">
+      <div class="dialog-header">
+        <div>
+          <h2 id="phone-dialog-title">Install App &amp; Connect Phone</h2>
+          <p class="card-sub">Open TradeTerminal as a standalone app on your laptop &amp; phone.</p>
+        </div>
+        <form method="dialog">
+          <button type="submit" id="devices-close-btn" class="btn-secondary" autofocus>Close</button>
+        </form>
+      </div>
+      <div class="dialog-body">
+        <p id="install-status" class="field-hint" role="status" hidden></p>
+        <div class="dialog-section">
+          <h3>Your Terminal URLs</h3>
+          <div id="devices-url-list" class="url-list"></div>
+          <p id="copy-url-status" class="field-hint" role="status" hidden></p>
+        </div>
+        <div class="dialog-section install-steps">
+          <div class="install-card">
+            <strong>Laptop (Windows / Mac — Edge or Chrome)</strong>
+            <p>Click the <b>Install App</b> button in the top bar (or browser menu <b>Apps → Install this site as an app</b>) to pin it to your Desktop/Taskbar.</p>
+          </div>
+          <div class="install-card">
+            <strong>iPhone (Safari)</strong>
+            <p>Open the <b>Home Wi-Fi</b> or <b>Tailscale</b> URL above in Safari, tap <b>Share (□↑)</b> → <b>Add to Home Screen</b>.</p>
+          </div>
+          <div class="install-card">
+            <strong>Android &amp; 4G/5G Anywhere (Tailscale HTTPS)</strong>
+            <p>Install <b>Tailscale</b> on PC + phone, run <code>tailscale serve --bg 8080</code>, open the <code>https://*.ts.net</code> link in Chrome, and tap <b>Install app</b>.</p>
+          </div>
+        </div>
+      </div>
+    </dialog>
+  </div>
+</body>
+</html>

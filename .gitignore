@@ -1,0 +1,30 @@
+# Python & Virtual Environment
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+
+# Runtime Secrets, Logs & Live Bot State
+.terminal_passcode
+live_bot.log
+live_state.json
+
+# Personal / Scratch Files
+Kith_Annsreng_Resume.pdf
+yt_transcript_*.txt
+
+# Downloaded Market Data & Generated Backtest Outputs
+/data/
+/data_2026/
+/data_4y/
+/*.html
+/trades*.csv
+/smc_*.csv
+/news_202*.csv
+/news_usd_*.csv
+
+# OS / Editor
+.DS_Store
+Thumbs.db

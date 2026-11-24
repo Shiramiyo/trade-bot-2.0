@@ -1,0 +1,57 @@
+{
+  "id": "/",
+  "name": "TradeTerminal — NQ & XAUUSD 1H Bot",
+  "short_name": "TradeTerm",
+  "description": "Read-only MT5 TradingView chart, Long/Short forecast boxes, performance analytics, and 1H Donchian radar.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0f17",
+  "theme_color": "#0b0f17",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Chart & Forecast Boxes",
+      "short_name": "Chart",
+      "url": "/?tab=chart",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Closed Trades",
+      "short_name": "Trades",
+      "url": "/?tab=trades",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "1H Donchian Radar",
+      "short_name": "1H Radar",
+      "url": "/?tab=radar",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}
