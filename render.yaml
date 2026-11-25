@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: trade-bot-showcase
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-cloud.txt
+    startCommand: python terminal_server.py --host 0.0.0.0 --public-showcase
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: PUBLIC_SHOWCASE
+        value: "1"

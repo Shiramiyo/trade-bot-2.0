@@ -9,7 +9,10 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    mt5 = None  # type: ignore[assignment]
 import pandas as pd
 
 from download_mt5_data import resolve_mt5_symbol

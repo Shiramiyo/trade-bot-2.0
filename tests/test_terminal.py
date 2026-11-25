@@ -539,3 +539,151 @@ def test_market_feed_all_15_symbols_and_tv_endpoints(monkeypatch, tmp_path):
         server.shutdown()
         server.server_close()
 
+
+def test_market_feed_hyperliquid_fallback_and_mt5_optional(monkeypatch) -> None:
+    import market_feed
+    import pandas as pd
+    from market_feed import DEFAULT_WATCHLIST, MarketFeedService
+
+    monkeypatch.setattr(market_feed, "mt5", None)
+
+    def blocked_binance(url: str):
+        raise urllib.error.HTTPError(url, 451, "Unavailable For Legal Reasons", {}, None)
+
+    def fake_hl_post(url: str, payload):
+        assert "hyperliquid" in url
+        if payload.get("type") == "metaAndAssetCtxs":
+            return [
+                {"universe": [{"name": "BTC"}, {"name": "SOL"}, {"name": "ETH"}, {"name": "HYPE"}, {"name": "DOGE"}]},
+                [
+                    {"midPx": "91250.5", "prevDayPx": "90000.0", "dayNtlVlm": "5000000"},
+                    {"midPx": "182.45", "prevDayPx": "180.0", "dayNtlVlm": "1000000"},
+                    {"midPx": "3120.75", "prevDayPx": "3050.0", "dayNtlVlm": "2000000"},
+                    {"midPx": "28.45", "prevDayPx": "26.0", "dayNtlVlm": "800000"},
+                    {"midPx": "0.3912", "prevDayPx": "0.38", "dayNtlVlm": "400000"},
+                ],
+            ]
+        if payload.get("type") == "candleSnapshot":
+            return [
+                {"t": 1795300000000 + i * 3600000, "o": "27.5", "h": "29.0", "l": "27.1", "c": "28.45", "v": "1234.5"}
+                for i in range(5)
+            ]
+        return []
+
+    seen_yf_tickers = []
+
+    def fake_yf_download(tickers, **kwargs):
+        seen_yf_tickers.extend(tickers)
+        idx = pd.date_range("2026-11-20", periods=3, freq="1D", tz="UTC")
+        cols = {}
+        for i, tk in enumerate(tickers):
+            base = 100.0 + i
+            cols[("Close", tk)] = [base - 1.0, base - 0.5, base]
+        df = pd.DataFrame(cols, index=idx)
+        df.columns = pd.MultiIndex.from_tuples(df.columns)
+        return df
+
+    monkeypatch.setattr(market_feed.yf, "download", fake_yf_download)
+
+    feed = MarketFeedService(http_getter=blocked_binance, http_poster=fake_hl_post)
+    wl = feed.get_watchlist(extra_symbols=["DOGEUSDT.P"], force=True)
+    by_sym = {r["symbol"]: r for r in wl["symbols"]}
+
+    for spec in DEFAULT_WATCHLIST:
+        assert by_sym[spec.symbol]["price"] is not None
+
+    # All 4 crypto perps satisfied by Hyperliquid without hitting Yahoo
+    assert "BTC-USD" not in seen_yf_tickers
+    assert by_sym["BTCUSDT.P"]["source"] == "Hyperliquid BTC-USD"
+    assert by_sym["BTCUSDT.P"]["price"] == 91250.5
+    assert by_sym["HYPEUSDT.P"]["source"] == "Hyperliquid HYPE-USD"
+    assert by_sym["HYPEUSDT.P"]["price"] == 28.45
+    assert by_sym["DOGEUSDT.P"]["source"] == "Hyperliquid DOGE-USD"
+    assert by_sym["DOGEUSDT.P"]["price"] == 0.3912
+    assert by_sym["DOGEUSDT.P"]["digits"] == 5
+
+    chart = feed.get_chart("HYPEUSDT.P", timeframe="1h", bars=100)
+    assert chart["source"] == "Hyperliquid Perp (HYPE-USD)"
+    assert len(chart["candles"]) == 5
+    assert chart["price"] == 28.45
+
+
+def test_public_showcase_mode_sanitizes_private_mt5(monkeypatch, tmp_path: Path) -> None:
+    import terminal_data
+
+    monkeypatch.setattr(terminal_data, "mt5", None)
+
+    # Regular --no-auth remains blocked on 0.0.0.0
+    with pytest.raises(SystemExit):
+        create_terminal_server(host="0.0.0.0", port=0, no_auth=True)
+
+    # Public showcase allows 0.0.0.0 creation safely
+    s0, code0 = create_terminal_server(host="0.0.0.0", port=0, public_showcase=True)
+    assert code0 == ""
+    s0.server_close()
+
+    state_file = tmp_path / "live_state.json"
+    state_file.write_text(json.dumps({"account_login": 999888777, "account_balance": 123456.78}), encoding="utf-8")
+    log_file = tmp_path / "live_bot.log"
+    log_file.write_text("2026-11-25 10:00:00 [INFO] SECRET_ACCOUNT_LOG 999888777\n", encoding="utf-8")
+    reports_file = tmp_path / "arena_4y_results.csv"
+    reports_file.write_text("strategy,net_pnl\nDONCHIAN_1H,12500\n", encoding="utf-8")
+
+    server, _ = create_terminal_server(host="127.0.0.1", port=0, public_showcase=True)
+    server.data_service.state_path = state_file
+    server.data_service.log_path = log_file
+    server.data_service.reports_path = reports_file
+
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/health") as h_resp:
+            h_json = json.loads(h_resp.read())
+            assert h_json["public_showcase"] is True
+            assert h_json["auth_required"] is False
+
+        with urllib.request.urlopen(f"{base_url}/api/auth") as a_resp:
+            a_json = json.loads(a_resp.read())
+            assert a_json["authenticated"] is True
+            assert a_json["public_showcase"] is True
+
+        with urllib.request.urlopen(f"{base_url}/api/connection-info") as c_resp:
+            c_json = json.loads(c_resp.read())
+            assert c_json["urls"] == {"local": [], "lan": [], "tailscale": []}
+
+        with urllib.request.urlopen(f"{base_url}/api/snapshot") as s_resp:
+            s_raw = s_resp.read().decode("utf-8")
+            assert "999888777" not in s_raw
+            s_json = json.loads(s_raw)
+            assert s_json["public_showcase"] is True
+            assert s_json["account"]["login"] is None
+            assert s_json["account"]["mode"] == "SHOWCASE"
+            assert s_json["positions"] == []
+
+        with urllib.request.urlopen(f"{base_url}/api/logs") as l_resp:
+            l_raw = l_resp.read().decode("utf-8")
+            assert "SECRET_ACCOUNT_LOG" not in l_raw
+
+        with urllib.request.urlopen(f"{base_url}/api/reports") as r_resp:
+            r_json = json.loads(r_resp.read())
+            assert len(r_json["strategies"]) == 1
+            assert r_json["strategies"][0]["strategy"] == "DONCHIAN_1H"
+
+        with urllib.request.urlopen(f"{base_url}/api/chart?symbol=USTEC") as lc_resp:
+            lc_json = json.loads(lc_resp.read())
+            assert "Public Showcase" in lc_json["error"]
+
+        login_req = urllib.request.Request(
+            f"{base_url}/api/login",
+            data=json.dumps({"passcode": "ignored"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(login_req) as login_resp:
+            assert json.loads(login_resp.read())["public_showcase"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+
+

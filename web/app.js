@@ -7,6 +7,7 @@
   const state = {
     scope: "all",
     activeTab: "overview",
+    publicShowcase: false,
     snapshot: null,
     reports: [],
     logs: [],
@@ -97,11 +98,19 @@
     input.focus();
   }
 
+  function applyShowcaseUi() {
+    const devicesBtn = $("devices-btn");
+    const logoutBtn = $("logout-btn");
+    if (devicesBtn) devicesBtn.hidden = true;
+    if (logoutBtn) logoutBtn.hidden = true;
+  }
+
   function applyRequestedInitialTab() {
     if (state.initialTabApplied) return;
     state.initialTabApplied = true;
     const reqTab = (new URLSearchParams(window.location.search).get("tab") || "").toLowerCase();
-    const targetBtn = reqTab ? document.getElementById(`tab-${reqTab}`) : null;
+    const targetTab = reqTab || (state.publicShowcase ? "chart" : "");
+    const targetBtn = targetTab ? document.getElementById(`tab-${targetTab}`) : null;
     if (targetBtn && targetBtn.getAttribute("role") === "tab") {
       targetBtn.click();
     }
@@ -232,6 +241,9 @@
       if (moveFocus) tab.focus();
 
       window.TVStudio?.onTabVisibility(state.activeTab === "chart");
+      if (state.publicShowcase && state.activeTab !== "overview") {
+        showAlert("");
+      }
       if (state.activeTab === "overview" && state.snapshot) {
         requestAnimationFrame(() => drawEquityChart(state.snapshot.performance.equity_curve, state.snapshot.performance.initial_balance));
       } else if (state.activeTab === "radar" && state.snapshot) {
@@ -384,36 +396,50 @@
 
     // Topbar
     const dot = $("mt5-status-dot");
-    dot.className = `status-dot ${snap.mt5_connected ? "online" : "offline"}`;
-
+    const isShowcase = Boolean(snap.public_showcase || state.publicShowcase);
     const modeBadge = $("acct-mode-badge");
-    modeBadge.textContent = acct.mode || "DEMO";
-    modeBadge.className = `pill ${acct.mode === "REAL" ? "red" : "accent"}`;
-
     const botBadge = $("bot-alive-badge");
-    if (bot.alive) {
-      botBadge.textContent = bot.dry_run ? "BOT DRY-RUN" : "BOT RUNNING";
-      botBadge.className = `pill ${bot.dry_run ? "amber" : "green"}`;
-    } else if (bot.present) {
-      botBadge.textContent = "BOT STOPPED";
-      botBadge.className = "pill amber";
-    } else {
-      botBadge.textContent = "BOT NOT STARTED";
-      botBadge.className = "pill neutral";
-    }
 
-    $("acct-meta").textContent = `MT5 ${acct.login || "—"} (${acct.server || "Offline"}) · ${acct.leverage ? `1:${acct.leverage}` : "—"}`;
-    $("ny-clock").textContent = `NY ${snap.generated_at_ny}`;
-    $("window-badge").textContent = snap.in_window ? "Market Window OPEN" : "Market Window CLOSED";
-
-    if (!snap.mt5_connected) {
-      showAlert(snap.mt5_error || "MetaTrader 5 desktop app is offline. Showing last known snapshot.");
-    } else if (acct.algo_allowed === false) {
-      showAlert("MT5 Algo Trading button is currently OFF inside MetaTrader 5. Enable it before Monday live execution.");
-    } else if (bot.dd_blocked) {
-      showAlert(`Daily DD guard triggered (${fmtNum(bot.daily_dd_pct, 2)}% >= ${fmtNum(bot.max_daily_dd_pct, 1)}%); new bot entries paused today.`);
+    if (isShowcase) {
+      dot.className = "status-dot online";
+      modeBadge.textContent = "SHOWCASE";
+      modeBadge.className = "pill accent";
+      botBadge.textContent = "CHART + ARENA LIVE";
+      botBadge.className = "pill green";
+      $("acct-meta").textContent = "Live Public Chart Studio · 4Y Strategy Arena (Private MT5 Hidden)";
+      $("ny-clock").textContent = `NY ${snap.generated_at_ny}`;
+      $("window-badge").textContent = snap.in_window ? "Market Window OPEN" : "Market Window CLOSED";
+      showAlert(state.activeTab === "overview" ? (snap.mt5_error || "") : "");
     } else {
-      showAlert("");
+      dot.className = `status-dot ${snap.mt5_connected ? "online" : "offline"}`;
+
+      modeBadge.textContent = acct.mode || "DEMO";
+      modeBadge.className = `pill ${acct.mode === "REAL" ? "red" : "accent"}`;
+
+      if (bot.alive) {
+        botBadge.textContent = bot.dry_run ? "BOT DRY-RUN" : "BOT RUNNING";
+        botBadge.className = `pill ${bot.dry_run ? "amber" : "green"}`;
+      } else if (bot.present) {
+        botBadge.textContent = "BOT STOPPED";
+        botBadge.className = "pill amber";
+      } else {
+        botBadge.textContent = "BOT NOT STARTED";
+        botBadge.className = "pill neutral";
+      }
+
+      $("acct-meta").textContent = `MT5 ${acct.login || "—"} (${acct.server || "Offline"}) · ${acct.leverage ? `1:${acct.leverage}` : "—"}`;
+      $("ny-clock").textContent = `NY ${snap.generated_at_ny}`;
+      $("window-badge").textContent = snap.in_window ? "Market Window OPEN" : "Market Window CLOSED";
+
+      if (!snap.mt5_connected) {
+        showAlert(snap.mt5_error || "MetaTrader 5 desktop app is offline. Showing last known snapshot.");
+      } else if (acct.algo_allowed === false) {
+        showAlert("MT5 Algo Trading button is currently OFF inside MetaTrader 5. Enable it before Monday live execution.");
+      } else if (bot.dd_blocked) {
+        showAlert(`Daily DD guard triggered (${fmtNum(bot.daily_dd_pct, 2)}% >= ${fmtNum(bot.max_daily_dd_pct, 1)}%); new bot entries paused today.`);
+      } else {
+        showAlert("");
+      }
     }
 
     // KPI Cards
@@ -1150,6 +1176,8 @@
 
     try {
       const auth = await apiJson("/api/auth");
+      state.publicShowcase = Boolean(auth.public_showcase);
+      if (state.publicShowcase) applyShowcaseUi();
       if (!auth.auth_required || auth.authenticated) {
         showAppView();
       } else {

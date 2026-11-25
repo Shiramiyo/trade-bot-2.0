@@ -4,7 +4,10 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    mt5 = None  # type: ignore[assignment]
 import numpy as np
 import pandas as pd
 
@@ -28,6 +31,8 @@ SYMBOL_ALIASES: Dict[str, List[str]] = {
 
 def resolve_mt5_symbol(strategy_sym: str) -> Optional[str]:
     """Find the exact matching symbol name available in the connected MT5 terminal."""
+    if mt5 is None:
+        return None
     candidates = SYMBOL_ALIASES.get(strategy_sym, [strategy_sym])
     all_mt5 = {s.name for s in (mt5.symbols_get() or [])}
 

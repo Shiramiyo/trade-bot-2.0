@@ -112,9 +112,10 @@ def discover_local_urls(port: int) -> Dict[str, List[str]]:
 class AuthStore:
     """In-memory session and failed-login rate limiter."""
 
-    def __init__(self, passcode: Optional[str], auth_required: bool = True) -> None:
+    def __init__(self, passcode: Optional[str], auth_required: bool = True, public_showcase: bool = False) -> None:
         self.passcode = passcode or ""
         self.auth_required = auth_required
+        self.public_showcase = public_showcase
         self._lock = threading.Lock()
         self._sessions: Dict[str, float] = {}
         self._failures: Dict[str, List[float]] = {}
@@ -295,19 +296,38 @@ class TerminalRequestHandler(BaseHTTPRequestHandler):
             return
 
         if route == "/api/health":
-            self._send_json(200, {"ok": True, "auth_required": self.auth_store.auth_required})
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "auth_required": self.auth_store.auth_required,
+                    "public_showcase": self.auth_store.public_showcase,
+                },
+            )
             return
 
         if route == "/api/connection-info":
             if not self._require_auth():
                 return
             port = getattr(self.server, "server_port", 8080)
+            if self.auth_store.public_showcase:
+                self._send_json(
+                    200,
+                    {
+                        "port": port,
+                        "auth_required": False,
+                        "public_showcase": True,
+                        "urls": {"local": [], "lan": [], "tailscale": []},
+                    },
+                )
+                return
             urls = discover_local_urls(port)
             self._send_json(
                 200,
                 {
                     "port": port,
                     "auth_required": self.auth_store.auth_required,
+                    "public_showcase": False,
                     "urls": urls,
                 },
             )
@@ -320,6 +340,7 @@ class TerminalRequestHandler(BaseHTTPRequestHandler):
                 {
                     "authenticated": self.auth_store.verify_session(token),
                     "auth_required": self.auth_store.auth_required,
+                    "public_showcase": self.auth_store.public_showcase,
                 },
             )
             return
@@ -403,6 +424,9 @@ class TerminalRequestHandler(BaseHTTPRequestHandler):
         raw_body = self.rfile.read(content_len) if content_len > 0 else b""
 
         if route == "/api/login":
+            if self.auth_store.public_showcase:
+                self._send_json(200, {"authenticated": True, "public_showcase": True})
+                return
             passcode = ""
             ctype = self.headers.get("Content-Type", "").lower()
             if "application/json" in ctype and raw_body:
@@ -464,23 +488,30 @@ def create_terminal_server(
     port: int = 8080,
     passcode: Optional[str] = None,
     no_auth: bool = False,
+    public_showcase: bool = False,
     symbols: Optional[List[str]] = None,
     history_days: int = 180,
     server_offset_hours: int = 7,
 ) -> Tuple[ThreadingHTTPServer, str]:
     """Create the configured `ThreadingHTTPServer` and return `(server, effective_passcode)`."""
     is_loopback = host in ("127.0.0.1", "localhost", "::1")
-    if no_auth and not is_loopback:
+    if no_auth and not public_showcase and not is_loopback:
         raise SystemExit("Safety block: --no-auth is only allowed with --host 127.0.0.1")
 
-    effective_passcode = "" if no_auth else resolve_passcode(passcode)
+    auth_required = not (no_auth or public_showcase)
+    effective_passcode = "" if not auth_required else resolve_passcode(passcode)
     service = TerminalDataService(
         symbols=symbols or ["NQ", "XAUUSD"],
         history_days=history_days,
         server_offset_hours=server_offset_hours,
+        public_showcase=public_showcase,
     )
     market_feed = MarketFeedService(server_offset_hours=server_offset_hours)
-    auth_store = AuthStore(passcode=effective_passcode, auth_required=not no_auth)
+    auth_store = AuthStore(
+        passcode=effective_passcode,
+        auth_required=auth_required,
+        public_showcase=public_showcase,
+    )
     server = ThreadingHTTPServer((host, port), TerminalRequestHandler)
     server.data_service = service  # type: ignore[attr-defined]
     server.market_feed = market_feed  # type: ignore[attr-defined]
@@ -489,11 +520,21 @@ def create_terminal_server(
 
 
 def main() -> None:
+    env_port_raw = os.environ.get("PORT", "").strip()
+    default_port = int(env_port_raw) if env_port_raw.isdigit() else 8080
+    env_showcase = os.environ.get("PUBLIC_SHOWCASE", "").strip().lower() in ("1", "true", "yes", "on")
+
     parser = argparse.ArgumentParser(description="Read-only Web Trading Terminal for NQ + XAUUSD MT5 Bot")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address (0.0.0.0 for phone/Tailscale/Wi-Fi, 127.0.0.1 for PC only)")
-    parser.add_argument("--port", type=int, default=8080, help="HTTP port (default 8080)")
+    parser.add_argument("--port", type=int, default=default_port, help="HTTP port (default $PORT or 8080)")
     parser.add_argument("--passcode", default=None, help="Override login passcode (otherwise saved in .terminal_passcode)")
     parser.add_argument("--no-auth", action="store_true", help="Disable passcode login (only permitted on 127.0.0.1)")
+    parser.add_argument(
+        "--public-showcase",
+        action="store_true",
+        default=env_showcase,
+        help="Run sanitized public TradingView Chart Studio + Strategy Arena showcase without passcode",
+    )
     parser.add_argument("--symbols", nargs="+", default=["NQ", "XAUUSD"])
     parser.add_argument("--history-days", type=int, default=180, help="Lookback days of MT5 closed deal history")
     parser.add_argument("--server-offset-hours", type=int, default=7, help="Broker server clock offset ahead of NY (MetaQuotes-Demo=7)")
@@ -504,25 +545,31 @@ def main() -> None:
         port=args.port,
         passcode=args.passcode,
         no_auth=args.no_auth,
+        public_showcase=args.public_showcase,
         symbols=args.symbols,
         history_days=args.history_days,
         server_offset_hours=args.server_offset_hours,
     )
-    urls = discover_local_urls(args.port)
 
-    log.info("=== Read-Only Trading Terminal Ready ===")
-    log.info("  PC Browser : %s", ", ".join(urls["local"]))
-    if args.host == "0.0.0.0":
-        if urls["lan"]:
-            log.info("  Home Wi-Fi : %s", ", ".join(urls["lan"]))
-        if urls["tailscale"]:
-            log.info("  Tailscale  : %s", ", ".join(urls["tailscale"]))
-        else:
-            log.info("  Tailscale  : (not detected yet — install Tailscale on PC & phone to use http://<tailscale-ip>:%d anywhere)", args.port)
-    if args.no_auth:
-        log.info("  Auth       : DISABLED (loopback only)")
+    if args.public_showcase:
+        log.info("=== Public Showcase Terminal Ready (MT5 Telemetry Hidden) ===")
+        log.info("  Bind       : http://%s:%d", args.host, args.port)
+        log.info("  Auth       : PUBLIC SHOWCASE (Chart Studio + 4Y Strategy Arena)")
     else:
-        log.info("  Passcode   : %s (saved in %s)", effective_passcode, PASSCODE_FILE.name)
+        urls = discover_local_urls(args.port)
+        log.info("=== Read-Only Trading Terminal Ready ===")
+        log.info("  PC Browser : %s", ", ".join(urls["local"]))
+        if args.host == "0.0.0.0":
+            if urls["lan"]:
+                log.info("  Home Wi-Fi : %s", ", ".join(urls["lan"]))
+            if urls["tailscale"]:
+                log.info("  Tailscale  : %s", ", ".join(urls["tailscale"]))
+            else:
+                log.info("  Tailscale  : (not detected yet — install Tailscale on PC & phone to use http://<tailscale-ip>:%d anywhere)", args.port)
+        if args.no_auth:
+            log.info("  Auth       : DISABLED (loopback only)")
+        else:
+            log.info("  Passcode   : %s (saved in %s)", effective_passcode, PASSCODE_FILE.name)
 
     try:
         server.serve_forever()

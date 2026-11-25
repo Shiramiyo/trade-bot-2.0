@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.terminal_passcode
+live_bot.log
+live_state.json
+data/
+data_2026/
+data_4y/
+*.html
+trades*.csv
+smc_*.csv
+news_*.csv
+Kith_Annsreng_Resume.pdf
+yt_transcript_*.txt

@@ -15,7 +15,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    mt5 = None  # type: ignore[assignment]
 import pandas as pd
 
 from download_mt5_data import resolve_mt5_symbol
@@ -691,6 +694,7 @@ class TerminalDataService:
         state_path: Path | str = ROOT_DIR / "live_state.json",
         log_path: Path | str = ROOT_DIR / "live_bot.log",
         reports_path: Path | str = ROOT_DIR / "arena_4y_results.csv",
+        public_showcase: bool = False,
     ) -> None:
         self.symbols = symbols or ["NQ", "XAUUSD"]
         self.history_days = history_days
@@ -699,12 +703,15 @@ class TerminalDataService:
         self.state_path = Path(state_path)
         self.log_path = Path(log_path)
         self.reports_path = Path(reports_path)
+        self.public_showcase = public_showcase
         self._lock = MT5_LOCK
         self._mt5_ready = False
         self._cache: Dict[str, Any] = {}
         self._cache_ts: float = 0.0
 
     def _ensure_mt5(self) -> bool:
+        if mt5 is None:
+            return False
         if self._mt5_ready and mt5.account_info() is not None:
             return True
         self._mt5_ready = bool(mt5.initialize())
@@ -749,6 +756,7 @@ class TerminalDataService:
             "mt5_connected": base["mt5_connected"],
             "mt5_error": base["mt5_error"],
             "in_window": base["in_window"],
+            "public_showcase": bool(base.get("public_showcase", self.public_showcase)),
             "bot": base["bot"],
             "account": acct,
             "positions": positions,
@@ -763,6 +771,49 @@ class TerminalDataService:
         now_ny = now_utc.astimezone(NY_TZ)
         now_local = now_utc.astimezone(LOCAL_TZ)
         in_window = is_trading_window(now_ny)
+
+        if self.public_showcase:
+            return {
+                "generated_at_utc": now_utc.isoformat(),
+                "generated_at_ny": now_ny.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                "generated_at_local": now_local.strftime("%Y-%m-%d %H:%M:%S"),
+                "mt5_connected": False,
+                "mt5_error": "Public Showcase Mode — Live TradingView Chart Studio & 4-Year Strategy Arena are active. Private MT5 telemetry is hidden.",
+                "in_window": in_window,
+                "public_showcase": True,
+                "bot": {
+                    "alive": False,
+                    "present": False,
+                    "pid": None,
+                    "age_seconds": None,
+                    "strategy": "DONCHIAN_1H(lb=20, sl=2.0ATR, trail=2.5ATR)",
+                    "dry_run": None,
+                    "dd_blocked": False,
+                    "daily_dd_pct": 0.0,
+                    "max_daily_dd_pct": 3.0,
+                    "risk_pct": 1.0,
+                    "updated_at_ny": None,
+                    "magic_number": MAGIC_NUMBER,
+                },
+                "account": {
+                    "login": None,
+                    "server": "Public Showcase",
+                    "currency": "USD",
+                    "mode": "SHOWCASE",
+                    "balance": 0.0,
+                    "equity": 0.0,
+                    "margin": 0.0,
+                    "margin_free": 0.0,
+                    "floating_pnl": 0.0,
+                    "leverage": 0,
+                    "algo_allowed": None,
+                },
+                "positions": [],
+                "radar": [],
+                "_deals": [],
+                "_balance_summary": {"initial_balance": 0.0, "net_deposits": 0.0},
+            }
+
         heartbeat = read_bot_heartbeat(self.state_path)
         hb_state = heartbeat.get("state") or {}
 
@@ -773,7 +824,8 @@ class TerminalDataService:
         max_cost = float(hb_state.get("max_cost_ratio", 0.20) or 0.20)
 
         mt5_ok = self._ensure_mt5()
-        mt5_error = None if mt5_ok else f"MT5 not connected ({mt5.last_error()})"
+        mt5_err_detail = "Python MetaTrader5 package not installed" if mt5 is None else mt5.last_error()
+        mt5_error = None if mt5_ok else f"MT5 not connected ({mt5_err_detail})"
 
         acct_payload: Dict[str, Any] = {
             "login": hb_state.get("account_login"),
@@ -907,6 +959,9 @@ class TerminalDataService:
         }
 
     def get_logs(self, limit: int = 150) -> List[Dict[str, str]]:
+        if self.public_showcase:
+            msg = "Private bot logs are hidden in Public Showcase mode. Open the Chart or Reports tab for live feeds and 4Y backtests."
+            return [{"ts": "", "level": "INFO", "msg": msg, "raw": f"[INFO] {msg}"}]
         return tail_bot_log(self.log_path, limit=limit)
 
     def get_reports(self) -> List[Dict[str, Any]]:
@@ -922,6 +977,17 @@ class TerminalDataService:
         tf_key = timeframe.lower()
         if tf_key not in tf_map:
             tf_key = "1h"
+
+        if self.public_showcase:
+            return {
+                "symbol": symbol,
+                "timeframe": tf_key,
+                "digits": 2,
+                "candles": [],
+                "indicators": {"don_hi": [], "don_lo": [], "ema50": [], "ema200": []},
+                "forecast": None,
+                "error": "Legacy MT5 chart endpoint is disabled in Public Showcase mode; use /api/tv/chart.",
+            }
 
         hb = read_bot_heartbeat(self.state_path)
         hb_state = hb.get("state") or {}
@@ -939,6 +1005,7 @@ class TerminalDataService:
                     mt5_sym = resolved
 
             if not mt5_ok:
+                mt5_err_detail = "Python MetaTrader5 package not installed" if mt5 is None else mt5.last_error()
                 return {
                     "symbol": mt5_sym,
                     "timeframe": tf_key,
@@ -946,7 +1013,7 @@ class TerminalDataService:
                     "candles": [],
                     "indicators": {"don_hi": [], "don_lo": [], "ema50": [], "ema200": []},
                     "forecast": None,
-                    "error": f"MT5 not connected ({mt5.last_error()})",
+                    "error": f"MT5 not connected ({mt5_err_detail})",
                 }
 
             acct = mt5.account_info()

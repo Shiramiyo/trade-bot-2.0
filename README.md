@@ -59,3 +59,20 @@ To check safely from your phone anywhere over 4G/5G without exposing your PC to 
 1. Install **Tailscale** (free) on both your Windows PC and your phone, signed into the same Tailscale account.
 2. Start `.\.venv\Scripts\python.exe terminal_server.py` (allow Python in Windows Firewall on Private networks if prompted).
 3. Open the printed **Tailscale** URL (`http://100.x.y.z:8080`) or **Home Wi-Fi** URL (`http://<PC-LAN-IP>:8080`) on your phone browser and unlock with your passcode.
+
+## Deploy Online (Public Showcase)
+
+Host the built-in TradingView Chart Studio (`15` multi-source watchlist symbols via Binance -> Hyperliquid -> Yahoo Finance) and 4-Year Strategy Arena benchmark publicly on Linux PaaS (Render, Railway, Fly.io, or Docker) without leaking MT5 credentials, `.terminal_passcode`, `live_state.json`, or `live_bot.log`:
+
+```bash
+# Linux / Cloud install (skips Windows-only MetaTrader5 wheel)
+pip install -r requirements-cloud.txt
+
+# Launch sanitized public showcase (auto-uses $PORT when set, defaults Landing Tab -> Chart)
+python terminal_server.py --host 0.0.0.0 --public-showcase
+```
+
+Included deployment templates:
+- [`render.yaml`](render.yaml) — One-click Render Web Service blueprint (`free` plan, `PUBLIC_SHOWCASE=1`, `/api/health` healthcheck).
+- [`Dockerfile`](Dockerfile) — Portable container image (`python:3.12-slim`) for Railway, Fly.io, or self-hosted Docker.
+- [`requirements-cloud.txt`](requirements-cloud.txt) — Pure-Python cloud dependencies without `MetaTrader5`.

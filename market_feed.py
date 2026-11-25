@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:  # MetaTrader5 provides Windows wheels only; Linux cloud hosts skip it
+    mt5 = None  # type: ignore[assignment]
 import pandas as pd
 import yfinance as yf
 
@@ -24,7 +27,7 @@ MT5_LOCK = threading.RLock()
 
 @dataclass(frozen=True)
 class WatchlistSymbol:
-    """Canonical watchlist definition mapping TV display symbols to MT5, Binance, and Yahoo feeds."""
+    """Canonical watchlist definition mapping TV display symbols to MT5, Binance, Hyperliquid, and Yahoo feeds."""
 
     symbol: str
     display_name: str
@@ -37,12 +40,13 @@ class WatchlistSymbol:
     binance_perp: Optional[str] = None
     yf_ticker: Optional[str] = None
     invert: bool = False
+    hl_coin: Optional[str] = None
 
 
 # Exact watchlist matching the user's TradingView list
 DEFAULT_WATCHLIST: Tuple[WatchlistSymbol, ...] = (
-    WatchlistSymbol("BTCUSDT.P", "Bitcoin Perpetual", "CRYPTO", "B", "#f7931a", "#ffffff", 1, ("BTCUSD", "BTCUSDT"), "BTCUSDT", "BTC-USD"),
-    WatchlistSymbol("SOLUSDT.P", "Solana Perpetual", "CRYPTO", "S", "#111827", "#14f195", 2, ("SOLUSD", "SOLUSDT"), "SOLUSDT", "SOL-USD"),
+    WatchlistSymbol("BTCUSDT.P", "Bitcoin Perpetual", "CRYPTO", "B", "#f7931a", "#ffffff", 1, ("BTCUSD", "BTCUSDT"), "BTCUSDT", "BTC-USD", hl_coin="BTC"),
+    WatchlistSymbol("SOLUSDT.P", "Solana Perpetual", "CRYPTO", "S", "#111827", "#14f195", 2, ("SOLUSD", "SOLUSDT"), "SOLUSDT", "SOL-USD", hl_coin="SOL"),
     WatchlistSymbol("GOLD", "Spot Gold / US Dollar", "METALS", "Au", "#eab308", "#111827", 3, ("XAUUSD", "XAUUSD.m"), None, "GC=F"),
     WatchlistSymbol("EURUSD", "Euro / U.S. Dollar", "FOREX", "EU", "#1d4ed8", "#ffffff", 5, ("EURUSD", "EURUSD.m"), None, "EURUSD=X"),
     WatchlistSymbol("JPYUSD", "Japanese Yen / U.S. Dollar", "FOREX", "JP", "#dc2626", "#ffffff", 7, ("USDJPY", "USDJPY.m"), None, "6J=F", invert=True),
@@ -54,8 +58,8 @@ DEFAULT_WATCHLIST: Tuple[WatchlistSymbol, ...] = (
     WatchlistSymbol("NZDUSD", "New Zealand Dollar / U.S. Dollar", "FOREX", "NZ", "#1e3a8a", "#ffffff", 5, ("NZDUSD", "NZDUSD.m"), None, "NZDUSD=X"),
     WatchlistSymbol("DXY", "U.S. Dollar Index", "INDEX", "$", "#059669", "#ffffff", 3, (), None, "DX-Y.NYB"),
     WatchlistSymbol("NAS100", "Nasdaq 100 Index", "INDEX", "100", "#0284c7", "#ffffff", 2, ("USTEC", "NAS100", "US100"), None, "NQ=F"),
-    WatchlistSymbol("ETHUSDT.P", "Ethereum Perpetual", "CRYPTO", "E", "#6366f1", "#ffffff", 2, ("ETHUSD", "ETHUSDT"), "ETHUSDT", "ETH-USD"),
-    WatchlistSymbol("HYPEUSDT.P", "Hyperliquid Perpetual", "CRYPTO", "H", "#0f172a", "#2dd4bf", 3, (), "HYPEUSDT", None),
+    WatchlistSymbol("ETHUSDT.P", "Ethereum Perpetual", "CRYPTO", "E", "#6366f1", "#ffffff", 2, ("ETHUSD", "ETHUSDT"), "ETHUSDT", "ETH-USD", hl_coin="ETH"),
+    WatchlistSymbol("HYPEUSDT.P", "Hyperliquid Perpetual", "CRYPTO", "H", "#0f172a", "#2dd4bf", 3, (), "HYPEUSDT", None, hl_coin="HYPE"),
 )
 
 WATCHLIST_BY_SYMBOL: Dict[str, WatchlistSymbol] = {item.symbol: item for item in DEFAULT_WATCHLIST}
@@ -106,9 +110,35 @@ YF_INTERVAL_CONFIG: Dict[str, Tuple[str, str, Optional[str]]] = {
     "1w": ("1wk", "10y", None),
 }
 
+HL_INTERVALS: Dict[str, Tuple[str, int]] = {
+    "1m": ("1m", 60),
+    "5m": ("5m", 300),
+    "15m": ("15m", 900),
+    "30m": ("30m", 1800),
+    "1h": ("1h", 3600),
+    "4h": ("4h", 14400),
+    "1d": ("1d", 86400),
+    "1w": ("1w", 604800),
+}
+
 
 def _http_get_json(url: str, timeout: float = 6.0) -> Any:
     req = urllib.request.Request(url, headers={"User-Agent": "TradeTerminal/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _http_post_json(url: str, payload: Any, timeout: float = 6.0) -> Any:
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "TradeTerminal/1.0",
+        },
+        method="POST",
+    )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -174,17 +204,18 @@ def resolve_watchlist_spec(symbol: str) -> WatchlistSymbol:
     if canonical in WATCHLIST_BY_SYMBOL:
         return WATCHLIST_BY_SYMBOL[canonical]
 
-    # Dynamic custom symbol fallback (supports Binance *.P / *USDT or Yahoo/MT5 tickers)
+    # Dynamic custom symbol fallback (supports Binance *.P / *USDT, Hyperliquid, or Yahoo/MT5 tickers)
     if raw.endswith(".P") or raw.endswith("USDT"):
         perp = raw[:-2] if raw.endswith(".P") else raw
-        badge = perp.replace("USDT", "")[:3] or "CR"
-        return WatchlistSymbol(raw, f"{perp} Perpetual", "CUSTOM", badge, "#334155", "#f8fafc", 2, (perp,), perp, None)
+        coin = perp[:-4] if perp.endswith("USDT") and len(perp) > 4 else perp
+        badge = coin[:3] or "CR"
+        return WatchlistSymbol(raw, f"{perp} Perpetual", "CUSTOM", badge, "#334155", "#f8fafc", 2, (perp,), perp, None, hl_coin=coin)
 
     return WatchlistSymbol(raw, raw, "CUSTOM", raw[:3], "#334155", "#f8fafc", 2, (raw,), None, raw)
 
 
 class MarketFeedService:
-    """Thread-safe, TTL-cached multi-source quote & OHLCV provider for MT5, Binance Futures, and Yahoo."""
+    """Thread-safe, TTL-cached multi-source quote & OHLCV provider for MT5, Binance Futures, Hyperliquid, and Yahoo."""
 
     def __init__(
         self,
@@ -192,11 +223,13 @@ class MarketFeedService:
         quote_ttl_seconds: float = 4.0,
         chart_ttl_seconds: float = 8.0,
         http_getter: Callable[[str], Any] = _http_get_json,
+        http_poster: Callable[[str, Any], Any] = _http_post_json,
     ) -> None:
         self.server_offset_hours = server_offset_hours
         self.quote_ttl_seconds = quote_ttl_seconds
         self.chart_ttl_seconds = chart_ttl_seconds
         self._http_get = http_getter
+        self._http_post = http_poster
         self._lock = threading.Lock()
         self._mt5_ready = False
         self._mt5_symbol_set: Optional[set[str]] = None
@@ -204,6 +237,8 @@ class MarketFeedService:
         self._chart_cache: Dict[Tuple[str, str, int], Tuple[float, Dict[str, Any]]] = {}
 
     def _ensure_mt5(self) -> bool:
+        if mt5 is None:
+            return False
         with MT5_LOCK:
             try:
                 if self._mt5_ready and mt5.account_info() is not None:
@@ -334,6 +369,37 @@ class MarketFeedService:
             "source_symbol": mt5_sym,  # type: ignore[dict-item]
         }
 
+    def _fetch_hyperliquid_quotes(self) -> Dict[str, Dict[str, float]]:
+        out: Dict[str, Dict[str, float]] = {}
+        try:
+            data = self._http_post("https://api.hyperliquid.xyz/info", {"type": "metaAndAssetCtxs"})
+            if not isinstance(data, list) or len(data) < 2:
+                return out
+            universe = (data[0] or {}).get("universe") or []
+            ctxs = data[1] or []
+            for asset, ctx in zip(universe, ctxs):
+                coin = str(asset.get("name", "")).upper()
+                if not coin or not isinstance(ctx, dict):
+                    continue
+                last = float(ctx.get("midPx") or ctx.get("markPx") or 0.0)
+                if last <= 0:
+                    continue
+                prev = float(ctx.get("prevDayPx") or last)
+                if prev <= 0:
+                    prev = last
+                chg = last - prev
+                pct = (chg / prev * 100.0) if prev > 0 else 0.0
+                out[coin] = {
+                    "price": last,
+                    "prev_close": prev,
+                    "change": chg,
+                    "change_pct": pct,
+                    "volume": float(ctx.get("dayNtlVlm") or 0.0),
+                }
+        except Exception:
+            pass
+        return out
+
     def get_watchlist(self, extra_symbols: Optional[List[str]] = None, force: bool = False) -> Dict[str, Any]:
         """Return live quotes for all 15 TradingView watchlist symbols plus any custom symbols."""
         now_mono = time.monotonic()
@@ -362,9 +428,19 @@ class MarketFeedService:
                     yf_needed.append(spec.yf_ticker)
             binance_quotes = binance_future.result()
 
-        # Fallback to Yahoo for any Binance symbol that failed offline
+        # Fallback to Hyperliquid (global, no geo-block), then MT5, then Yahoo
+        hl_quotes: Dict[str, Dict[str, float]] = {}
+        hl_needed = any(
+            spec.hl_coin and not (spec.binance_perp and spec.binance_perp in binance_quotes)
+            for spec in specs
+        )
+        if hl_needed:
+            hl_quotes = self._fetch_hyperliquid_quotes()
+
         for spec in specs:
             if spec.binance_perp and spec.binance_perp not in binance_quotes:
+                if spec.hl_coin and spec.hl_coin in hl_quotes:
+                    continue
                 q_mt5 = self._fetch_mt5_quote(spec)
                 if q_mt5 is not None:
                     mt5_quotes[spec.symbol] = q_mt5
@@ -380,6 +456,9 @@ class MarketFeedService:
             if spec.binance_perp and spec.binance_perp in binance_quotes:
                 q = binance_quotes[spec.binance_perp]
                 source = f"Binance {spec.binance_perp}"
+            elif spec.hl_coin and spec.hl_coin in hl_quotes:
+                q = hl_quotes[spec.hl_coin]
+                source = f"Hyperliquid {spec.hl_coin}-USD"
             elif spec.symbol in mt5_quotes:
                 q = mt5_quotes[spec.symbol]
                 src_sym = q.get("source_symbol", spec.symbol)
@@ -519,6 +598,62 @@ class MarketFeedService:
         candles = _df_to_candle_list(renamed.tail(bars), digits=digits, invert=invert_yf)
         return candles, f"Yahoo {spec.yf_ticker}", digits
 
+    def _fetch_hyperliquid_candles(
+        self,
+        coin: str,
+        tf: str,
+        bars: int,
+        digits: int,
+        is_custom: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], str, int]:
+        iv, sec = HL_INTERVALS.get(tf, ("1h", 3600))
+        limit = max(60, min(1000, bars))
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - (limit + 10) * sec * 1000
+        payload = {
+            "type": "candleSnapshot",
+            "req": {
+                "coin": coin,
+                "interval": iv,
+                "startTime": start_ms,
+                "endTime": end_ms,
+            },
+        }
+        try:
+            raw = self._http_post("https://api.hyperliquid.xyz/info", payload)
+            parsed: List[Tuple[int, float, float, float, float, float]] = []
+            for k in (raw or []):
+                if not isinstance(k, dict) or "t" not in k:
+                    continue
+                parsed.append(
+                    (
+                        int(int(k["t"]) // 1000),
+                        float(k["o"]),
+                        float(k["h"]),
+                        float(k["l"]),
+                        float(k["c"]),
+                        float(k.get("v", 0.0) or 0.0),
+                    )
+                )
+            parsed = parsed[-limit:]
+            if parsed:
+                eff_digits = _infer_digits(parsed[-1][4], digits) if is_custom else digits
+                candles = [
+                    {
+                        "time": ts,
+                        "open": round(o, eff_digits),
+                        "high": round(h, eff_digits),
+                        "low": round(l, eff_digits),
+                        "close": round(c, eff_digits),
+                        "volume": round(v, 4),
+                    }
+                    for ts, o, h, l, c, v in parsed
+                ]
+                return candles, f"Hyperliquid Perp ({coin}-USD)", eff_digits
+        except Exception:
+            pass
+        return [], "", digits
+
     def get_chart(self, symbol: str = "NAS100", timeframe: str = "1h", bars: int = 500) -> Dict[str, Any]:
         """Fetch OHLCV candles and quote metadata for any watchlist or custom symbol."""
         spec = resolve_watchlist_spec(symbol)
@@ -539,6 +674,11 @@ class MarketFeedService:
 
         if spec.binance_perp:
             candles, source = self._fetch_binance_candles(spec.binance_perp, tf, bars, digits)
+
+        if not candles and spec.hl_coin:
+            candles, source, digits = self._fetch_hyperliquid_candles(
+                spec.hl_coin, tf, bars, digits, is_custom=(spec.category == "CUSTOM")
+            )
 
         if not candles and spec.mt5_candidates:
             candles, source, digits, bid, ask = self._fetch_mt5_candles(spec, tf, bars)
