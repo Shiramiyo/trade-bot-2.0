@@ -595,10 +595,10 @@ class BtcResearchService:
 
     def __init__(
         self,
-        ttl_seconds: float = 30.0,
-        bars_per_horizon: int = 1350,
-        train_bars: int = 900,
-        refit_every: int = 72,
+        ttl_seconds: float = 45.0,
+        bars_per_horizon: int = 3500,
+        train_bars: int = 1000,
+        refit_every: int = 96,
         fetcher: Callable[..., Tuple[pd.DataFrame, str]] = fetch_btc_15m_candles,
     ) -> None:
         self.ttl_seconds = ttl_seconds
@@ -620,6 +620,7 @@ class BtcResearchService:
         by_name = {m.name: m for m in res["models"]}
         all_m = by_name["Walk-Forward Logistic (All Bars)"]
         conf_m = by_name["Logistic High-Conf (>=55% / <=45%)"]
+        ultra_m = by_name["Logistic Ultra-Conf (>=58% / <=42%)"]
         hits = sum(1 for c in res["recent_paper_checks"] if c["verdict"] == "HIT")
         misses = sum(1 for c in res["recent_paper_checks"] if c["verdict"] == "MISS")
         return {
@@ -633,12 +634,16 @@ class BtcResearchService:
                 "oos_bars": res["oos_bars"],
                 "avg_abs_move_bps": res["avg_abs_15m_move_bps"],
                 "all_acc_pct": all_m.accuracy_pct,
+                "all_ci95": f"[{all_m.ci95_low_pct:.1f}%, {all_m.ci95_high_pct:.1f}%]",
                 "conf_acc_pct": conf_m.accuracy_pct,
                 "conf_trades": conf_m.trades,
+                "ultra_acc_pct": ultra_m.accuracy_pct,
+                "ultra_trades": ultra_m.trades,
                 "gross_0bps_pct": all_m.pnl_by_fee_bps[0]["return_pct"],
                 "net_4bps_pct": all_m.pnl_by_fee_bps[4]["return_pct"],
                 "net_8bps_pct": all_m.pnl_by_fee_bps[8]["return_pct"],
                 "conf_8bps_pct": conf_m.pnl_by_fee_bps[8]["return_pct"],
+                "ultra_8bps_pct": ultra_m.pnl_by_fee_bps[8]["return_pct"],
             },
             "top_features": [{"name": k, "weight": v} for k, v in res["top_features"][:5]],
         }

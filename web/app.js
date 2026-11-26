@@ -395,11 +395,17 @@
 
       const meta2 = el("div", { class: "btc-ml-meta" });
       meta2.append(
-        el("span", {}, `OOS Acc ${fmtNum(oos.all_acc_pct, 1)}% (Conf ${fmtNum(oos.conf_acc_pct, 1)}%)`),
-        el("span", {}, `0bps ${Number(oos.gross_0bps_pct) >= 0 ? "+" : ""}${fmtNum(oos.gross_0bps_pct, 1)}% vs 8bps ${Number(oos.net_8bps_pct) >= 0 ? "+" : ""}${fmtNum(oos.net_8bps_pct, 1)}%`)
+        el("span", {}, `Hit Rate (${oos.oos_bars || 0} bars): All ${fmtNum(oos.all_acc_pct, 2)}% ${oos.all_ci95 || ""}`),
+        el("span", {}, `>=55%: ${fmtNum(oos.conf_acc_pct, 2)}% (${oos.conf_trades || 0}) · >=58%: ${fmtNum(oos.ultra_acc_pct, 2)}% (${oos.ultra_trades || 0})`)
       );
 
-      box.append(head, probRow, meta1, meta2);
+      const meta3 = el("div", { class: "btc-ml-meta" });
+      meta3.append(
+        el("span", {}, `Paper Net: 0bps ${Number(oos.gross_0bps_pct) >= 0 ? "+" : ""}${fmtNum(oos.gross_0bps_pct, 1)}%`),
+        el("span", {}, `8bps taker: All ${fmtNum(oos.net_8bps_pct, 1)}% · >=58% ${fmtNum(oos.ultra_8bps_pct, 1)}%`)
+      );
+
+      box.append(head, probRow, meta1, meta2, meta3);
       grid.appendChild(box);
     }
 
@@ -433,7 +439,9 @@
     if (updatedEl && activeHz) {
       const hits = Number(activeHz.recent_hits || 0);
       const misses = Number(activeHz.recent_misses || 0);
-      updatedEl.textContent = `${state.btcScoreHorizon} Scorecard (${hits} HIT / ${misses} MISS in last 8) · ${activeHz.source || "Live Feed"}`;
+      const decided = hits + misses;
+      const recPct = decided > 0 ? `${fmtNum((hits / decided) * 100, 1)}%` : "—";
+      updatedEl.textContent = `${state.btcScoreHorizon} Recent Hit Rate: ${hits}/${decided} (${recPct}) · OOS (${activeHz.oos_summary?.oos_bars || 0} bars): ${fmtNum(activeHz.oos_summary?.all_acc_pct, 2)}% · ${activeHz.source || "Live Feed"}`;
     }
     updateBtcCountdowns();
   }
