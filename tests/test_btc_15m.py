@@ -104,15 +104,16 @@ def test_zero_volume_and_flat_candles_remain_finite() -> None:
 
 def test_fetch_btc_15m_candles_falls_back_to_hyperliquid() -> None:
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    bar_ms = 15 * 60 * 1000
-    base_ms = now_ms - 450 * bar_ms
+    bar_ms = 5 * 60 * 1000
+    aligned_now_ms = (now_ms // bar_ms) * bar_ms
+    base_ms = aligned_now_ms - 419 * bar_ms
 
     def fail_binance(url: str):
         raise urllib.error.HTTPError(url, 451, "Unavailable For Legal Reasons", {}, None)
 
     def fake_hl(url: str, payload):
         assert payload["req"]["coin"] == "BTC"
-        return [
+        rows = [
             {
                 "t": base_ms + i * bar_ms,
                 "o": "60000",
@@ -122,13 +123,32 @@ def test_fetch_btc_15m_candles_falls_back_to_hyperliquid() -> None:
                 "v": "100",
                 "n": 250,
             }
-            for i in range(420)
+            for i in range(419)
         ]
+        # Forming bar currently open with immutable open price 60123.45
+        rows.append(
+            {
+                "t": aligned_now_ms,
+                "o": "60123.45",
+                "h": "60200",
+                "l": "60000",
+                "c": "60150",
+                "v": "10",
+                "n": 10,
+            }
+        )
+        return rows
 
-    df, src = fetch_btc_15m_candles(total_bars=400, http_getter=fail_binance, http_poster=fake_hl)
+    df, src = fetch_btc_15m_candles(total_bars=400, http_getter=fail_binance, http_poster=fake_hl, interval="5m")
     assert "Hyperliquid" in src
     assert len(df) >= 390
+    assert df.attrs.get("forming_open") == 60123.45
     assert (df["open_time_ms"].diff().dropna() > 0).all()
+
+    res = run_walk_forward_experiment(df, train_bars=250, refit_every=50, interval="5m")
+    assert res["live_paper_forecast"]["target_open_price"] == 60123.45
+    assert res["recent_paper_checks"][0]["candle_open"] == 60000.0
+    assert res["recent_paper_checks"][0]["raw_verdict"] in ("HIT", "MISS")
 
 
 def test_btc_research_service_returns_5m_and_15m_horizons_and_caches() -> None:

@@ -1785,11 +1785,11 @@ dialog::backdrop {
 
 @container (width < 600px) {
   .btc-ml-table {
-    --label-2: "Start $";
+    --label-2: "Open $";
     --label-3: "Close $";
-    --label-4: "Actual";
-    --label-5: "P(Up)";
-    --label-6: "Call";
+    --label-4: "Open -> Close";
+    --label-5: "P(Green)";
+    --label-6: "Algo Call";
     --label-7: "Result";
   }
 

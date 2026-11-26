@@ -376,20 +376,22 @@
 
       const live = hz.live;
       const oos = hz.oos_summary || {};
-      const dir = live.direction || "SKIP";
-      const pillCls = dir === "UP" ? "green" : dir === "DOWN" ? "red" : "amber";
+      const dir = live.raw_call || live.direction || "SKIP";
+      const strong = live.strong !== undefined ? Boolean(live.strong) : (dir === "UP" || dir === "DOWN");
+      const pillCls = dir === "UP" ? (strong ? "green" : "amber") : dir === "DOWN" ? (strong ? "red" : "amber") : "neutral";
       head.appendChild(el("span", { class: `pill ${pillCls}` }, live.paper_signal || dir));
 
       pillParts.push(`${iv}:${dir === "UP" ? "UP" : dir === "DOWN" ? "DN" : "SK"}`);
 
       const probRow = el("div", { class: "btc-ml-prob-row" });
       const pUp = Number(live.prob_next_up_pct ?? (Number(live.prob_next_15m_up || 0.5) * 100));
-      probRow.appendChild(el("span", { class: `btc-ml-prob ${pUp >= 55 ? "pos" : pUp <= 45 ? "neg" : ""}` }, `P(Up) ${fmtNum(pUp, 2)}%`));
+      probRow.appendChild(el("span", { class: `btc-ml-prob ${dir === "UP" ? "pos" : dir === "DOWN" ? "neg" : ""}` }, `P(Green) ${fmtNum(pUp, 2)}%`));
       probRow.appendChild(el("span", { class: "muted", id: `btc-ml-cd-${iv}` }, "Calculating..."));
 
       const meta1 = el("div", { class: "btc-ml-meta" });
+      const openPx = Number(live.target_open_price ?? live.close_price);
       meta1.append(
-        el("span", {}, `Target vs $${fmtNum(live.close_price, 2)}`),
+        el("span", {}, `Candle Open: $${fmtNum(openPx, 2)}`),
         el("span", {}, live.target_window_local || "")
       );
 
@@ -419,17 +421,19 @@
     for (const row of [...checks].reverse()) {
       const tr = el("tr");
       tr.appendChild(el("th", { scope: "row" }, row.window_local));
-      tr.appendChild(el("td", {}, fmtNum(row.ref_close, 2)));
+      tr.appendChild(el("td", {}, fmtNum(row.candle_open ?? row.ref_close, 2)));
       tr.appendChild(el("td", {}, fmtNum(row.actual_close, 2)));
 
       const retVal = Number(row.ret_pct || 0);
       tr.appendChild(el("td", { class: retVal >= 0 ? "pos" : "neg" }, `${row.actual_dir} ${retVal >= 0 ? "+" : ""}${fmtNum(retVal, 3)}%`));
       tr.appendChild(el("td", {}, `${fmtNum(row.prob_up_pct, 2)}%`));
-      tr.appendChild(el("td", {}, row.signal));
+      const algoCall = row.raw_call || row.signal || "—";
+      const tier = row.conf_tier ? ` (${row.conf_tier})` : "";
+      tr.appendChild(el("td", { class: algoCall === "UP" ? "pos" : algoCall === "DOWN" ? "neg" : "" }, `${algoCall}${tier}`));
 
       const resTd = el("td");
-      const v = String(row.verdict || "");
-      const vCls = v === "HIT" ? "green" : v === "MISS" ? "red" : "neutral";
+      const v = String(row.raw_verdict || row.verdict || "");
+      const vCls = v.startsWith("HIT") ? "green" : v.startsWith("MISS") ? "red" : "neutral";
       resTd.appendChild(el("span", { class: `pill ${vCls}` }, v));
       tr.appendChild(resTd);
 
@@ -437,11 +441,10 @@
     }
 
     if (updatedEl && activeHz) {
-      const hits = Number(activeHz.recent_hits || 0);
-      const misses = Number(activeHz.recent_misses || 0);
-      const decided = hits + misses;
-      const recPct = decided > 0 ? `${fmtNum((hits / decided) * 100, 1)}%` : "—";
-      updatedEl.textContent = `${state.btcScoreHorizon} Recent Hit Rate: ${hits}/${decided} (${recPct}) · OOS (${activeHz.oos_summary?.oos_bars || 0} bars): ${fmtNum(activeHz.oos_summary?.all_acc_pct, 2)}% · ${activeHz.source || "Live Feed"}`;
+      const rawHits = Number(activeHz.recent_raw_hits ?? activeHz.recent_hits ?? 0);
+      const rawTotal = (activeHz.recent_checks || []).length;
+      const rawPct = rawTotal > 0 ? `${fmtNum((rawHits / rawTotal) * 100, 1)}%` : "—";
+      updatedEl.textContent = `${state.btcScoreHorizon} Open->Close Hits: ${rawHits}/${rawTotal} (${rawPct}) · Long-run OOS (${activeHz.oos_summary?.oos_bars || 0} bars): ${fmtNum(activeHz.oos_summary?.all_acc_pct, 2)}% · ${activeHz.source || "Live Feed"}`;
     }
     updateBtcCountdowns();
   }

@@ -84,11 +84,18 @@ def fetch_btc_15m_candles(
     if df.empty:
         raise RuntimeError(f"Unable to fetch {iv} candles for {symbol} from Binance or Hyperliquid")
 
-    # Drop the latest bar if it has not finished its interval close yet
+    # Capture immutable open price of the currently forming candle, then drop forming bar from causal set
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    forming_open: Optional[float] = None
+    forming_open_ms: Optional[int] = None
     if len(df) >= 2 and int(df["open_time_ms"].iloc[-1]) + iv_mins * 60 * 1000 > now_ms:
+        forming_open = float(df["open"].iloc[-1])
+        forming_open_ms = int(df["open_time_ms"].iloc[-1])
         df = df.iloc[:-1].copy()
-    return df.reset_index(drop=True), source
+    df = df.reset_index(drop=True)
+    df.attrs["forming_open"] = forming_open
+    df.attrs["forming_open_ms"] = forming_open_ms
+    return df, source
 
 
 def _fetch_binance_15m_paginated(
@@ -192,8 +199,13 @@ def _compute_rsi(close: pd.Series, period: int) -> pd.Series:
     loss = (-delta).clip(lower=0.0)
     avg_gain = gain.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
     avg_loss = loss.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0.0, np.nan)
-    rsi = 100.0 - (100.0 / (1.0 + rs))
+    safe_loss = avg_loss.where(avg_loss > 0.0, 1.0)
+    rsi_vals = np.where(
+        avg_loss > 0.0,
+        100.0 - (100.0 / (1.0 + (avg_gain / safe_loss))),
+        np.where(avg_gain > 0.0, 100.0, 50.0),
+    )
+    rsi = pd.Series(rsi_vals, index=close.index).where(avg_gain.notna() & avg_loss.notna())
     return (rsi - 50.0) / 50.0
 
 
@@ -262,9 +274,10 @@ def build_causal_dataset(df: pd.DataFrame) -> pd.DataFrame:
     work["tod_sin"] = np.sin(2.0 * math.pi * hour_frac / 24.0)
     work["tod_cos"] = np.cos(2.0 * math.pi * hour_frac / 24.0)
 
-    # Target for bar t is bar (t+1) return (shifted -1 ONLY on label columns!)
+    # Target for bar t is whether the NEXT candle (t+1) closes UP (Green) vs its own Open (Open -> Close)
+    work["next_open"] = open_.shift(-1)
     work["next_close"] = close.shift(-1)
-    work["next_ret"] = work["next_close"] / close - 1.0
+    work["next_ret"] = work["next_close"] / work["next_open"] - 1.0
     work["target_up"] = (work["next_ret"] > 0.0).astype(float)
     work.loc[work["next_ret"].isna(), "target_up"] = np.nan
     return work
@@ -503,6 +516,7 @@ def run_walk_forward_experiment(
     recent_checks: List[Dict[str, Any]] = []
     ts_oos = pd.to_datetime(clean["timestamp"].iloc[oos_start:], utc=True)
     close_oos = clean["close"].iloc[oos_start:].to_numpy(dtype=float)
+    next_open_oos = clean["next_open"].iloc[oos_start:].to_numpy(dtype=float)
     next_close_oos = clean["next_close"].iloc[oos_start:].to_numpy(dtype=float)
     tail_n = min(8, oos_n)
     for idx_i in range(oos_n - tail_n, oos_n):
@@ -512,6 +526,8 @@ def run_walk_forward_experiment(
         ret_val = float(y_oos_ret[idx_i])
         actual_dir = "UP" if ret_val > 0.0 else "DOWN"
         raw_call = "UP" if p_val >= 0.5 else "DOWN"
+        raw_verdict = "HIT" if raw_call == actual_dir else "MISS"
+        strong = p_val >= 0.55 or p_val <= 0.45
         if p_val >= 0.55:
             signal = "UP"
             verdict = "HIT" if actual_dir == "UP" else "MISS"
@@ -520,16 +536,20 @@ def run_walk_forward_experiment(
             verdict = "HIT" if actual_dir == "DOWN" else "MISS"
         else:
             signal = "SKIP"
-            verdict = f"SKIP ({'raw HIT' if raw_call == actual_dir else 'raw MISS'})"
+            verdict = f"SKIP (raw {raw_verdict})"
         recent_checks.append(
             {
                 "window_local": f"{pred_open_local:%m-%d %H:%M}->{pred_close_local:%H:%M}",
+                "candle_open": round(float(next_open_oos[idx_i]), 2),
                 "ref_close": round(float(close_oos[idx_i]), 2),
                 "actual_close": round(float(next_close_oos[idx_i]), 2),
                 "ret_pct": round(ret_val * 100.0, 3),
                 "prob_up_pct": round(p_val * 100.0, 2),
                 "signal": signal,
+                "raw_call": raw_call,
+                "conf_tier": "Strong" if strong else "Low",
                 "actual_dir": actual_dir,
+                "raw_verdict": raw_verdict,
                 "verdict": verdict,
             }
         )
@@ -549,17 +569,36 @@ def run_walk_forward_experiment(
         target_close_utc = target_open_utc + bar_delta
         target_open_local = target_open_utc + local_offset
         target_close_local = target_close_utc + local_offset
+
+        forming_open = df_raw.attrs.get("forming_open")
+        forming_open_ms = df_raw.attrs.get("forming_open_ms")
+        target_open_ms = int(target_open_utc.timestamp() * 1000)
+        target_open_px = (
+            float(forming_open)
+            if (forming_open is not None and forming_open_ms == target_open_ms)
+            else float(live_row["close"])
+        )
+
+        raw_call = "UP" if p_up >= 0.5 else "DOWN"
+        strong = p_up >= 0.55 or p_up <= 0.45
+        paper_signal = (
+            f"{raw_call} · {'GREEN' if raw_call == 'UP' else 'RED'} "
+            f"({'Strong' if strong else 'Low Edge'})"
+        )
         live_forecast = {
             "interval": iv,
             "as_of_utc": str(live_row["timestamp"]),
             "target_window_local": f"{target_open_local:%Y-%m-%d %H:%M} -> {target_close_local:%H:%M} (UTC+7)",
             "target_open_epoch": int(target_open_utc.timestamp()),
             "target_close_epoch": int(target_close_utc.timestamp()),
+            "target_open_price": round(target_open_px, 2),
             "close_price": round(float(live_row["close"]), 2),
             "prob_next_15m_up": round(p_up, 4),
             "prob_next_up_pct": round(p_up * 100.0, 2),
-            "direction": "UP" if p_up >= 0.55 else ("DOWN" if p_up <= 0.45 else "SKIP"),
-            "paper_signal": "UP (>=55%)" if p_up >= 0.55 else ("DOWN (<=45%)" if p_up <= 0.45 else f"SKIP / NO EDGE (raw lean: {'UP' if p_up >= 0.5 else 'DOWN'})"),
+            "raw_call": raw_call,
+            "strong": strong,
+            "direction": raw_call if strong else "SKIP",
+            "paper_signal": paper_signal,
         }
 
     buy_hold_eq = float(1000.0 * np.prod(1.0 + y_oos_ret))
@@ -623,6 +662,7 @@ class BtcResearchService:
         ultra_m = by_name["Logistic Ultra-Conf (>=58% / <=42%)"]
         hits = sum(1 for c in res["recent_paper_checks"] if c["verdict"] == "HIT")
         misses = sum(1 for c in res["recent_paper_checks"] if c["verdict"] == "MISS")
+        raw_hits = sum(1 for c in res["recent_paper_checks"] if c["raw_verdict"] == "HIT")
         return {
             "interval": interval,
             "source": source,
@@ -630,6 +670,7 @@ class BtcResearchService:
             "recent_checks": res["recent_paper_checks"],
             "recent_hits": hits,
             "recent_misses": misses,
+            "recent_raw_hits": raw_hits,
             "oos_summary": {
                 "oos_bars": res["oos_bars"],
                 "avg_abs_move_bps": res["avg_abs_15m_move_bps"],
@@ -713,22 +754,22 @@ def generate_experiment_html(result: Dict[str, Any], out_path: Path | str = "btc
 def format_live_scorecard(result: Dict[str, Any], source: str) -> str:
     iv = result.get("interval", "15m")
     lines: List[str] = [
-        f"=== Live Paper {iv} BTC Scorecard ({source}) ===",
-        f"{'Target Window (UTC+7)':20s} {'Start$':>10s} {'Close$':>10s} {'Actual':>13s} {'P(Up)':>7s} {'Call':>6s} {'Result':16s}",
-        "-" * 88,
+        f"=== Live Paper {iv} BTC Open->Close Scorecard ({source}) ===",
+        f"{'Target Window (UTC+7)':20s} {'Open$':>10s} {'Close$':>10s} {'Open->Close':>13s} {'P(Grn)':>7s} {'Algo':>5s} {'Result':10s}",
+        "-" * 86,
     ]
     for r in result.get("recent_paper_checks", []):
         actual_str = f"{r['actual_dir']:4s} {r['ret_pct']:+6.3f}%"
         lines.append(
-            f"{r['window_local']:20s} {r['ref_close']:10,.2f} {r['actual_close']:10,.2f} "
-            f"{actual_str:>13s} {r['prob_up_pct']:6.2f}% {r['signal']:>6s} {r['verdict']:16s}"
+            f"{r['window_local']:20s} {r['candle_open']:10,.2f} {r['actual_close']:10,.2f} "
+            f"{actual_str:>13s} {r['prob_up_pct']:6.2f}% {r['raw_call']:>5s} {r['raw_verdict']:4s} ({r['conf_tier']})"
         )
     lf = result.get("live_paper_forecast")
     if lf:
-        lines.append("-" * 88)
+        lines.append("-" * 86)
         lines.append(
-            f"NEXT {iv} ({lf['target_window_local']}) vs ${lf['close_price']:,.2f}: "
-            f"P(up) = {lf['prob_next_15m_up']*100:.2f}% -> {lf['paper_signal']} [PAPER ONLY]"
+            f"NEXT {iv} ({lf['target_window_local']}) from Candle Open ${lf['target_open_price']:,.2f}: "
+            f"P(Green) = {lf['prob_next_up_pct']:.2f}% -> {lf['paper_signal']} [PAPER ONLY]"
         )
     return "\n".join(lines)
 
