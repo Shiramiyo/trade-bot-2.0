@@ -229,6 +229,7 @@
                   <span class="tv-caret" aria-hidden="true">&#9662;</span>
                 </button>
                 <button type="button" id="tv-bot-boxes-btn" class="tv-tb-btn" aria-pressed="true" title="Toggle Bot Trade &amp; Forecast Boxes">Bot Boxes</button>
+                <button type="button" id="btc-ml-jump-btn" class="tv-tb-btn" title="Jump to BTC 5m / 15m Paper ML Predictor">BTC 5m/15m</button>
               </div>
 
               <div class="tv-tb-group tv-tb-right" role="group" aria-label="View tools">
@@ -479,6 +480,50 @@
               </div>
             </header>
             <div id="chart-position-cards" class="positions-grid"></div>
+          </article>
+
+          <!-- Paper-Only 5m & 15m BTC ML Research Predictor -->
+          <article class="card tv-bot-cards-wrap btc-ml-card" id="btc-ml-section">
+            <header class="card-header wrap-header">
+              <div>
+                <h2 id="btc-ml-heading">BTC 5m &amp; 15m Paper Predictor</h2>
+                <p class="card-sub">Walk-forward L2 Logistic ML on closed Binance / Hyperliquid candles — research &amp; fee-impact lab only (no live orders)</p>
+              </div>
+              <div class="toolbar-group toolbar-toggles">
+                <span class="pill amber">PAPER ONLY</span>
+                <button type="button" id="btc-ml-open-5m" class="btn-mini">Chart 5m</button>
+                <button type="button" id="btc-ml-open-15m" class="btn-mini">Chart 15m</button>
+                <button type="button" id="btc-ml-refresh-btn" class="btn-secondary">Update ML</button>
+              </div>
+            </header>
+
+            <div id="btc-ml-grid" class="btc-ml-grid"></div>
+
+            <div class="btc-ml-score-head">
+              <div class="segmented" role="group" aria-label="BTC paper scorecard timeframe">
+                <button type="button" id="btc-score-5m-btn" class="seg-btn" aria-pressed="false">5m Recent 8</button>
+                <button type="button" id="btc-score-15m-btn" class="seg-btn" aria-pressed="true">15m Recent 8</button>
+              </div>
+              <span id="btc-ml-updated" class="muted">Loading 5m &amp; 15m paper predictions...</span>
+            </div>
+
+            <div tabindex="0" role="region" aria-labelledby="btc-ml-score-caption" class="table-wrapper">
+              <table id="btc-ml-table" class="data-table btc-ml-table">
+                <caption id="btc-ml-score-caption" class="sr-only">Recent 5m and 15m BTC Paper Predictions vs Actual Closes</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Window (UTC+7)</th>
+                    <th scope="col">Start $</th>
+                    <th scope="col">Close $</th>
+                    <th scope="col">Actual Move</th>
+                    <th scope="col">P(Up)</th>
+                    <th scope="col">Call</th>
+                    <th scope="col">Result</th>
+                  </tr>
+                </thead>
+                <tbody id="btc-ml-tbody"></tbody>
+              </table>
+            </div>
           </article>
         </div>
       </section>

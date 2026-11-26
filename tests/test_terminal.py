@@ -674,6 +674,25 @@ def test_public_showcase_mode_sanitizes_private_mt5(monkeypatch, tmp_path: Path)
             lc_json = json.loads(lc_resp.read())
             assert "Public Showcase" in lc_json["error"]
 
+        class _FakeBtcResearch:
+            def get_predictions(self, intervals=("5m", "15m"), force=False):
+                return {
+                    "symbol": "BTCUSDT.P",
+                    "paper_only": True,
+                    "updated_at_epoch": 1795659999,
+                    "horizons": {
+                        "5m": {"interval": "5m", "live": {"direction": "DOWN", "prob_next_up_pct": 41.2}, "recent_checks": []},
+                        "15m": {"interval": "15m", "live": {"direction": "UP", "prob_next_up_pct": 58.4}, "recent_checks": []},
+                    },
+                }
+
+        server.btc_research = _FakeBtcResearch()  # type: ignore[attr-defined]
+        with urllib.request.urlopen(f"{base_url}/api/tv/btc-predict") as bp_resp:
+            bp_json = json.loads(bp_resp.read())
+            assert bp_json["paper_only"] is True
+            assert bp_json["horizons"]["5m"]["live"]["direction"] == "DOWN"
+            assert bp_json["horizons"]["15m"]["live"]["direction"] == "UP"
+
         login_req = urllib.request.Request(
             f"{base_url}/api/login",
             data=json.dumps({"passcode": "ignored"}).encode("utf-8"),

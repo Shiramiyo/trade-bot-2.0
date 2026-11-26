@@ -11,6 +11,9 @@
     snapshot: null,
     reports: [],
     logs: [],
+    btcPredict: null,
+    btcScoreHorizon: "15m",
+    btcPredictLastLoadMs: 0,
     countdown: REFRESH_INTERVAL_SEC,
     timerId: null,
     equityPoints: [],
@@ -244,7 +247,9 @@
       if (state.publicShowcase && state.activeTab !== "overview") {
         showAlert("");
       }
-      if (state.activeTab === "overview" && state.snapshot) {
+      if (state.activeTab === "chart" && !state.btcPredict) {
+        loadBtcPredictions(false);
+      } else if (state.activeTab === "overview" && state.snapshot) {
         requestAnimationFrame(() => drawEquityChart(state.snapshot.performance.equity_curve, state.snapshot.performance.initial_balance));
       } else if (state.activeTab === "radar" && state.snapshot) {
         requestAnimationFrame(() => renderRadarCharts(state.snapshot.radar));
@@ -318,6 +323,139 @@
     });
   }
 
+  function fmtCountdown(sec) {
+    const s = Math.max(0, Math.floor(sec));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${String(m).padStart(2, "0")}m ${String(r).padStart(2, "0")}s`;
+  }
+
+  function updateBtcCountdowns() {
+    const horizons = state.btcPredict?.horizons;
+    if (!horizons) return;
+    let triggerRefresh = false;
+    for (const iv of ["5m", "15m"]) {
+      const hz = horizons[iv];
+      const live = hz?.live;
+      const cdEl = $(`btc-ml-cd-${iv}`);
+      const closeMs = Number(live?.target_close_epoch || 0) * 1000;
+      if (!closeMs) continue;
+      const remSec = Math.ceil((closeMs - Date.now()) / 1000);
+      if (cdEl) cdEl.textContent = remSec > 0 ? `Closes in ${fmtCountdown(remSec)}` : "Updating...";
+      if (remSec <= -3 && closeMs > (state.btcPredictTriggeredMs || 0) && !state.btcPredictLoading) {
+        state.btcPredictTriggeredMs = closeMs;
+        triggerRefresh = true;
+      }
+    }
+    if (triggerRefresh) loadBtcPredictions(true);
+  }
+
+  function renderBtcPredictions(payload) {
+    const grid = $("btc-ml-grid");
+    const tbody = $("btc-ml-tbody");
+    const updatedEl = $("btc-ml-updated");
+    const jumpBtn = $("btc-ml-jump-btn");
+    if (!grid || !tbody) return;
+
+    const horizons = payload?.horizons || {};
+    clearChildren(grid);
+
+    const pillParts = [];
+    for (const iv of ["5m", "15m"]) {
+      const hz = horizons[iv];
+      const box = el("div", { class: "btc-ml-box" });
+      const head = el("div", { class: "btc-ml-box-head" });
+      head.appendChild(el("strong", {}, `Next ${iv.toUpperCase()} BTC Candle`));
+
+      if (!hz || hz.error || !hz.live) {
+        head.appendChild(el("span", { class: "pill neutral" }, "OFFLINE"));
+        box.append(head, el("p", { class: "empty-note" }, hz?.error || "Feed temporarily unavailable."));
+        grid.appendChild(box);
+        continue;
+      }
+
+      const live = hz.live;
+      const oos = hz.oos_summary || {};
+      const dir = live.direction || "SKIP";
+      const pillCls = dir === "UP" ? "green" : dir === "DOWN" ? "red" : "amber";
+      head.appendChild(el("span", { class: `pill ${pillCls}` }, live.paper_signal || dir));
+
+      pillParts.push(`${iv}:${dir === "UP" ? "UP" : dir === "DOWN" ? "DN" : "SK"}`);
+
+      const probRow = el("div", { class: "btc-ml-prob-row" });
+      const pUp = Number(live.prob_next_up_pct ?? (Number(live.prob_next_15m_up || 0.5) * 100));
+      probRow.appendChild(el("span", { class: `btc-ml-prob ${pUp >= 55 ? "pos" : pUp <= 45 ? "neg" : ""}` }, `P(Up) ${fmtNum(pUp, 2)}%`));
+      probRow.appendChild(el("span", { class: "muted", id: `btc-ml-cd-${iv}` }, "Calculating..."));
+
+      const meta1 = el("div", { class: "btc-ml-meta" });
+      meta1.append(
+        el("span", {}, `Target vs $${fmtNum(live.close_price, 2)}`),
+        el("span", {}, live.target_window_local || "")
+      );
+
+      const meta2 = el("div", { class: "btc-ml-meta" });
+      meta2.append(
+        el("span", {}, `OOS Acc ${fmtNum(oos.all_acc_pct, 1)}% (Conf ${fmtNum(oos.conf_acc_pct, 1)}%)`),
+        el("span", {}, `0bps ${Number(oos.gross_0bps_pct) >= 0 ? "+" : ""}${fmtNum(oos.gross_0bps_pct, 1)}% vs 8bps ${Number(oos.net_8bps_pct) >= 0 ? "+" : ""}${fmtNum(oos.net_8bps_pct, 1)}%`)
+      );
+
+      box.append(head, probRow, meta1, meta2);
+      grid.appendChild(box);
+    }
+
+    if (jumpBtn) {
+      jumpBtn.textContent = pillParts.length ? `BTC ${pillParts.join(" · ")}` : "BTC 5m/15m";
+    }
+
+    const activeHz = horizons[state.btcScoreHorizon] || horizons["15m"] || horizons["5m"];
+    clearChildren(tbody);
+    const checks = activeHz?.recent_checks || [];
+    for (const row of [...checks].reverse()) {
+      const tr = el("tr");
+      tr.appendChild(el("th", { scope: "row" }, row.window_local));
+      tr.appendChild(el("td", {}, fmtNum(row.ref_close, 2)));
+      tr.appendChild(el("td", {}, fmtNum(row.actual_close, 2)));
+
+      const retVal = Number(row.ret_pct || 0);
+      tr.appendChild(el("td", { class: retVal >= 0 ? "pos" : "neg" }, `${row.actual_dir} ${retVal >= 0 ? "+" : ""}${fmtNum(retVal, 3)}%`));
+      tr.appendChild(el("td", {}, `${fmtNum(row.prob_up_pct, 2)}%`));
+      tr.appendChild(el("td", {}, row.signal));
+
+      const resTd = el("td");
+      const v = String(row.verdict || "");
+      const vCls = v === "HIT" ? "green" : v === "MISS" ? "red" : "neutral";
+      resTd.appendChild(el("span", { class: `pill ${vCls}` }, v));
+      tr.appendChild(resTd);
+
+      tbody.appendChild(tr);
+    }
+
+    if (updatedEl && activeHz) {
+      const hits = Number(activeHz.recent_hits || 0);
+      const misses = Number(activeHz.recent_misses || 0);
+      updatedEl.textContent = `${state.btcScoreHorizon} Scorecard (${hits} HIT / ${misses} MISS in last 8) · ${activeHz.source || "Live Feed"}`;
+    }
+    updateBtcCountdowns();
+  }
+
+  async function loadBtcPredictions(force = false) {
+    if (state.btcPredictLoading) return;
+    state.btcPredictLoading = true;
+    try {
+      const data = await apiJson(`/api/tv/btc-predict?force=${force ? 1 : 0}`);
+      state.btcPredict = data;
+      state.btcPredictLastLoadMs = Date.now();
+      renderBtcPredictions(data);
+    } catch (err) {
+      const updatedEl = $("btc-ml-updated");
+      if (updatedEl && err.message !== "Unauthorized") {
+        updatedEl.textContent = `Paper predictor unavailable: ${err.message}`;
+      }
+    } finally {
+      state.btcPredictLoading = false;
+    }
+  }
+
   // Data loading & polling
   async function refreshAll(force = false) {
     try {
@@ -326,6 +464,9 @@
       state.countdown = REFRESH_INTERVAL_SEC;
       renderSnapshot(snap);
       window.TVStudio?.setSnapshot(snap);
+      if (state.activeTab === "chart" && (force || !state.btcPredict || Date.now() - state.btcPredictLastLoadMs >= 25000)) {
+        loadBtcPredictions(force);
+      }
       if (state.activeTab === "logs") await loadLogs();
       if (state.activeTab === "reports" && !state.reports.length) await loadReports();
     } catch (err) {
@@ -361,6 +502,7 @@
     $("countdown-label").textContent = `(${state.countdown}s)`;
     state.timerId = window.setInterval(() => {
       if (document.hidden) return;
+      if (state.activeTab === "chart") updateBtcCountdowns();
       state.countdown -= 1;
       if (state.countdown <= 0) {
         refreshAll(false);
@@ -1025,6 +1167,31 @@
       apiJson,
       onStatusAlert: (msg) => showAlert(msg),
     });
+
+    $("btc-ml-jump-btn")?.addEventListener("click", () => {
+      $("btc-ml-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (!state.btcPredict) loadBtcPredictions(false);
+    });
+    $("btc-ml-open-5m")?.addEventListener("click", () => {
+      window.TVStudio?.openSymbol("BTCUSDT.P", "5m", null);
+      $("tv-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    $("btc-ml-open-15m")?.addEventListener("click", () => {
+      window.TVStudio?.openSymbol("BTCUSDT.P", "15m", null);
+      $("tv-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    $("btc-ml-refresh-btn")?.addEventListener("click", () => loadBtcPredictions(true));
+
+    const score5 = $("btc-score-5m-btn");
+    const score15 = $("btc-score-15m-btn");
+    const setScoreHorizon = (iv) => {
+      state.btcScoreHorizon = iv;
+      score5?.setAttribute("aria-pressed", String(iv === "5m"));
+      score15?.setAttribute("aria-pressed", String(iv === "15m"));
+      if (state.btcPredict) renderBtcPredictions(state.btcPredict);
+    };
+    score5?.addEventListener("click", () => setScoreHorizon("5m"));
+    score15?.addEventListener("click", () => setScoreHorizon("15m"));
   }
 
   function setupInstallSupport() {

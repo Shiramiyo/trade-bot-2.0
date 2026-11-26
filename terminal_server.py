@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from btc_15m_research import BtcResearchService
 from market_feed import MarketFeedService
 from terminal_data import ROOT_DIR, TerminalDataService
 
@@ -181,6 +182,10 @@ class TerminalRequestHandler(BaseHTTPRequestHandler):
     @property
     def auth_store(self) -> AuthStore:
         return self.server.auth_store  # type: ignore[attr-defined]
+
+    @property
+    def btc_research(self) -> BtcResearchService:
+        return self.server.btc_research  # type: ignore[attr-defined]
 
     def log_message(self, fmt: str, *args: Any) -> None:
         # Keep console noise clean except explicit errors/info
@@ -409,6 +414,16 @@ class TerminalRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, self.market_feed.get_chart(symbol=sym, timeframe=tf, bars=bars))
             return
 
+        if route == "/api/tv/btc-predict":
+            if not self._require_auth():
+                return
+            qs = parse_qs(parsed.query)
+            force = qs.get("force", ["0"])[0] == "1"
+            ivs_raw = qs.get("intervals", ["5m,15m"])[0]
+            ivs = [s.strip().lower() for s in ivs_raw.split(",") if s.strip() in ("5m", "15m")]
+            self._send_json(200, self.btc_research.get_predictions(intervals=ivs or ("5m", "15m"), force=force))
+            return
+
         self._send_json(404, {"error": "Not found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -507,6 +522,7 @@ def create_terminal_server(
         public_showcase=public_showcase,
     )
     market_feed = MarketFeedService(server_offset_hours=server_offset_hours)
+    btc_research = BtcResearchService()
     auth_store = AuthStore(
         passcode=effective_passcode,
         auth_required=auth_required,
@@ -515,6 +531,7 @@ def create_terminal_server(
     server = ThreadingHTTPServer((host, port), TerminalRequestHandler)
     server.data_service = service  # type: ignore[attr-defined]
     server.market_feed = market_feed  # type: ignore[attr-defined]
+    server.btc_research = btc_research  # type: ignore[attr-defined]
     server.auth_store = auth_store  # type: ignore[attr-defined]
     return server, effective_passcode
 
